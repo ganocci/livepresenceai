@@ -1,0 +1,25 @@
+# Python
+backend/venv/
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Flutter
+app/.dart_tool/
+app/build/
+app/.packages
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Ambiente/segredos
+.env
+
+# Material do TCC (texto, apresentação e pendências): mantido fora do GitHub
+docs/tcc/
+docs/PENDENCIAS_DOCUMENTACAO_E_APRESENTACAO.md
+docs/NOTAS_APRESENTACAO_DEMO.md
