@@ -1,9 +1,37 @@
 # LivePresenceAI — Passo a passo de execução e roteiro da demonstração
 
-Versão: Protótipo Funcional Integrado v1.1 (30/09/2026).
+Versão: versão final em desenvolvimento (04/10/2026).
 Para detalhes técnicos (API, regras de negócio, banco), ver [docs/DOCUMENTACAO_TECNICA.md](docs/DOCUMENTACAO_TECNICA.md).
 
 Os comandos abaixo são para **PowerShell no Windows**.
+
+---
+
+## 0. Instalação para o usuário final (recomendado)
+
+Para uma escola ou faculdade, sem terminal no dia a dia:
+
+1. Dar dois cliques em **Instalar-LivePresenceAI.exe** (gerado pela equipe com
+   `powershell -ExecutionPolicy Bypass -File instalador\empacotar.ps1`), clicar em **Sim** no aviso do
+   Windows, escolher **Este computador faz tudo** e clicar em **Instalar** (10 a 30 minutos, com internet).
+   Em computadores separados: **Só o servidor** num e **Só a câmera de uma sala** nos outros (este pede a
+   chave do módulo de IA, copiada no painel do servidor em **Celulares e outras salas**).
+   Alternativa pela linha de comando: `powershell -ExecutionPolicy Bypass -File instalar.ps1` como
+   administrador (`-Papel Servidor`/`-Papel Sala`; `-Simular` mostra o que seria feito).
+2. Clicar em **Abrir o LivePresenceAI** (ou no atalho da área de trabalho) e em **Ligar tudo**.
+3. Clicar em **Abrir o app** e criar a **conta do administrador** (só na primeira vez).
+4. No app: **Minha conta (avatar) → Administração** → cadastrar professores e salas.
+5. No painel, em **Esta sala**: escolher a sala e a câmera (**Testar imagem** para conferir) e ligar o
+   reconhecimento. Marcar **Iniciar com o Windows** para não precisar abrir o painel todo dia.
+6. Celulares Android: baixar o app em `https://<IP do servidor>:8443/android` (endereço mostrado no painel)
+   e permitir a instalação. Com o celular no mesmo Wi-Fi, o app **encontra o servidor sozinho** — não é
+   preciso digitar o IP nem instalar certificado. Pelo navegador (outros aparelhos), instalar uma vez o
+   `ca.crt` (painel → **Celulares e outras salas** → Abrir a pasta do certificado).
+
+Para gerar o APK de novo (equipe): `powershell -ExecutionPolicy Bypass -File app\gerar_apk.ps1`
+(precisa do Android SDK em `C:\Android\Sdk`; ver documentação técnica, seção 11).
+
+As seções a seguir descrevem a execução em **modo de desenvolvimento** (três terminais), usada pela equipe.
 
 ---
 
@@ -58,9 +86,9 @@ python seed_dados_demo.py
 
 O seed cria as tabelas, o professor de teste, a **Turma A - Manhã** e 6 alunos. Pode ser rodado mais de uma vez sem duplicar nada.
 
-> **Banco criado antes de 30/09/2026?** Rodar uma vez o script
-> `database\migracao_001_registro_unico_e_deteccoes.sql` no pgAdmin (Query Tool no banco `livepresenceai`).
-> Sem isso o backend dá erro ao registrar presença. Rodar de novo não tem efeito.
+> **Banco criado antes?** Não é preciso fazer nada: ao iniciar, o backend aplica sozinho as migrações
+> pendentes (`database\migracao_*.sql`) e mostra no terminal quais aplicou. Os alunos antigos ficam sem RA:
+> preencher pela tela **Alunos** do app.
 
 ### 2.3 App
 
@@ -68,6 +96,23 @@ O seed cria as tabelas, o professor de teste, a **Turma A - Manhã** e 6 alunos.
 cd E:\repositories\livepresenceai_projeto\app
 flutter pub get
 ```
+
+### 2.4 Módulo de IA (reconhecimento facial)
+
+Ambiente separado do backend:
+
+```powershell
+cd E:\repositories\livepresenceai_projeto\ia
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Na primeira execução são baixados os modelos: InsightFace `buffalo_l` (~280 MB) e prova de vida
+(1,5 MB) para `C:\Users\<usuário>\.insightface`, e YOLOv8 `yolov8n.pt` (6 MB) para a pasta `ia`.
+Precisa de internet só nessa vez. A instalação inclui o PyTorch e demora alguns minutos.
 
 ---
 
@@ -98,7 +143,15 @@ flutter run -d chrome
 
 Login de teste: `professor@livepresenceai.com` / `senha123` (já vem preenchido).
 
-**Terminal 3 — simulador** (deixar aberto, com o venv ativo, e rodar só na hora da demo)
+Depois do login, a tela **Minhas turmas** mostra um cartão por turma com três botões:
+**Chamada** (chamada ao vivo), **Alunos** (incluir, editar e excluir alunos com nome e RA) e
+**Histórico** (aulas passadas; tocar numa aula abre o relatório). No relatório, o botão de download
+(canto superior direito) exporta em **PDF**, **Excel** ou **CSV**: no navegador o arquivo é baixado; no
+celular abre a opção de salvar ou compartilhar.
+
+**Terminal 3 — origem dos reconhecimentos**: o **módulo de IA com a câmera** (seção 8) **ou** o simulador.
+
+Para o simulador (deixar aberto, com o venv ativo, e rodar só na hora da demo):
 
 ```powershell
 cd E:\repositories\livepresenceai_projeto\backend
@@ -196,3 +249,63 @@ Os horários ficam gravados em **UTC** (3 h a mais que o horário de Brasília);
 | `Activate.ps1` bloqueado | Política de execução do PowerShell | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | Erro com bcrypt 5.x no login | Versão incompatível com passlib | `pip install bcrypt==4.3.0` |
 | App em outro dispositivo da rede não conecta | App aponta para 127.0.0.1 e o backend só aceita conexões locais | Trocar `apiHost` em `app\lib\config.dart` pelo IP do computador do backend e subir com `uvicorn main:app --reload --host 0.0.0.0` (liberar a porta 8000 no firewall do Windows) |
+| Módulo de IA: "Nao foi possivel abrir a camera 0" | Webcam em uso por outro programa ou índice diferente | Fechar Teams/Zoom/câmera do Windows; tentar `--camera 1` |
+| Módulo de IA parado em "aguardando o professor" | Chamada aberta em outra turma ou backend com outra chave | Conferir `--turma`; não definir `CHAVE_MODULO_IA`, ou usar o mesmo valor nos dois terminais |
+| Aluno aparece como "desconhecido" na janela | Sem cadastro facial, luz ruim, rosto de lado ou muito longe | Cadastrar (seção 8.1); melhorar a iluminação; olhar para a câmera |
+
+---
+
+## 8. Reconhecimento facial com a câmera
+
+Terminal com o ambiente do módulo de IA ativo:
+
+```powershell
+cd E:\repositories\livepresenceai_projeto\ia
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+### 8.1 Cadastro facial (uma vez por aluno, com o backend ligado)
+
+**Pelo app (forma normal):** em **Alunos**, editar o aluno e ligar **"Autorizou o reconhecimento facial"**
+(só para quem assinou a autorização na matrícula). Depois tocar no ícone de rosto do aluno → enquadrar o
+rosto na moldura → **Capturar**. O app conta 3 s, tira 5 fotos e mostra "Rosto cadastrado" ou o que
+corrigir (aproximar, iluminar, deixar só o aluno). As fotos não ficam no celular nem no servidor.
+No navegador do computador a câmera funciona com `flutter run -d chrome` (endereço `localhost`); num
+celular, use o app instalado.
+
+**Pelo script (laboratório e experimentos)**, no terminal do módulo de IA:
+
+```powershell
+python cadastro_facial.py --turma 1      # lista os alunos (ID, nome, se já tem cadastro)
+python cadastro_facial.py --aluno 1      # cadastra a Ana Souza (ID 1) pela webcam
+```
+
+O script mostra o termo de consentimento e pergunta se o aluno concorda. Depois abre a janela da câmera:
+o aluno olha para a câmera, **sozinho na imagem**, até completar 10 amostras (ESC cancela). Só um vetor
+numérico é gravado no banco; a foto não é salva.
+
+Outras opções: `--camera 1` (outra câmera), `--imagem foto.jpg` (cadastro por foto),
+`--remover 1` (exclui o cadastro facial do aluno).
+
+### 8.2 Chamada com reconhecimento real
+
+1. Backend e app ligados (terminais 1 e 2).
+2. Iniciar o módulo da sala **antes ou depois** de abrir a chamada (ele espera sozinho):
+   ```powershell
+   python modulo_reconhecimento.py --turma 1
+   ```
+3. No app, abrir a **Turma A - Manhã**. Em até 5 s o terminal mostra `Chamada aberta: sessao #N`.
+4. Quem estiver cadastrado e aparecer na câmera é marcado no app como **Na sala**. Na janela:
+   - rosto **verde** com nome e similaridade = reconhecido; **laranja** = não reconhecido;
+     **vermelho** = recusado na prova de vida (foto ou tela);
+   - pessoa com contorno **azul** e `#N Nome` = trilha identificada: o aluno continua contando mesmo de
+     cabeça baixa ou de lado; **cinza** = pessoa ainda sem identificação.
+5. Encerrar a chamada no app normalmente. O módulo volta a aguardar a próxima chamada; `q` na janela o fecha.
+
+O primeiro carregamento dos modelos leva alguns segundos. Para testar sem câmera:
+`python modulo_reconhecimento.py --turma 1 --imagem foto.jpg` ou `--video aula.mp4`.
+
+Opções para os experimentos: `--sem-rastreamento` (só rostos visíveis, sem YOLOv8/DeepSORT) e
+`--sem-prova-de-vida`. Para mostrar a prova de vida, aponte para a câmera uma foto do aluno no celular:
+o rosto deve ficar vermelho e não ser registrado (ainda não testado com ataques reais; ver experimento E2).

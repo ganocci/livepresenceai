@@ -1,6 +1,8 @@
 # Python
 backend/venv/
 backend/.venv/
+ia/venv/
+ia/.venv/
 __pycache__/
 *.pyc
 
@@ -23,3 +25,10 @@ app/.flutter-plugins-dependencies
 docs/tcc/
 docs/PENDENCIAS_DOCUMENTACAO_E_APRESENTACAO.md
 docs/NOTAS_APRESENTACAO_DEMO.md
+ia/*.pt
+
+# Configuracao local da instalacao (segredos, certificados e registros)
+config/
+
+# Instalador gerado (instalador/empacotar.ps1)
+dist/

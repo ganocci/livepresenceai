@@ -9,3 +9,7 @@ pydantic>=2.12.0
 opencv-python>=4.10.0.84
 requests>=2.32.3
 bcrypt==4.3.0
+openpyxl>=3.1.5
+fpdf2>=2.8.9
+insightface>=2.1
+onnxruntime>=1.30.0

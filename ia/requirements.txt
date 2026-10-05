@@ -1,0 +1,11 @@
+opencv-python==5.0.0.93
+insightface==2.1
+onnxruntime==1.30.0
+numpy==2.5.3
+requests==2.34.2
+ultralytics==8.4.173
+torch==2.14.1
+torchvision==0.29.1
+deep-sort-realtime==1.3.2
+# deep-sort-realtime usa pkg_resources, removido do setuptools a partir da versao 81
+setuptools==80.10.2

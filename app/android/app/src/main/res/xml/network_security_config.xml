@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LivePresenceAI roda na rede local da instituicao, com HTTPS assinado pela CA propria da instalacao
+  (config/certificados/ca.crt, instalada no celular pelo usuario). Sem "user" abaixo, o Android 7+ nao
+  confiaria nessa CA. HTTP sem criptografia fica permitido para o modo de desenvolvimento
+  (http://IP:8000); em uso real, usar o endereco https:// mostrado no painel.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

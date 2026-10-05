@@ -6,6 +6,8 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>A câmera é usada para cadastrar o rosto do aluno no reconhecimento facial de presença.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Livepresenceai App</string>
 	<key>CFBundleExecutable</key>

@@ -17,9 +17,12 @@ CREATE TABLE turma (
 CREATE TABLE aluno (
     id SERIAL PRIMARY KEY,
     nome VARCHAR(150) NOT NULL,
+    ra VARCHAR(20),
     turma_id INTEGER NOT NULL REFERENCES turma(id),
     embedding JSONB,
-    criado_em TIMESTAMP NOT NULL DEFAULT now()
+    consentimento_biometrico_em TIMESTAMP,
+    criado_em TIMESTAMP NOT NULL DEFAULT now(),
+    CONSTRAINT uq_aluno_ra UNIQUE (ra)
 );
 
 CREATE TABLE sessao (

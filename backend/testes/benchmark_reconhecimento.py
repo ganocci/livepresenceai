@@ -49,7 +49,7 @@ def resumo(nome, amostras_ms):
     }
 
 
-async def medir(sessao_id, alunos):
+async def medir(sessao_id, alunos, token):
     http = requests.Session()
     http.headers.update({"X-API-Key": CHAVE})
     t_http, t_ws = [], []
@@ -57,7 +57,7 @@ async def medir(sessao_id, alunos):
         mensagem = await ws.recv()
         return json.loads(mensagem), time.perf_counter()
 
-    async with websockets.connect(f"{WS}/ws/sessoes/{sessao_id}") as ws:
+    async with websockets.connect(f"{WS}/ws/sessoes/{sessao_id}?token={token}") as ws:
         for i in range(N_AQUECIMENTO + N_MEDIDAS):
             aluno = alunos[i % len(alunos)]
             espera = asyncio.create_task(receber())  # escuta o WebSocket em paralelo ao POST
@@ -86,7 +86,7 @@ def main_bench():
     db.add_all(alunos); db.commit()
     try:
         sessao = main.abrir_sessao(turma.id, professor=prof, db=db)
-        t_http, t_ws = asyncio.run(medir(sessao.id, [a.id for a in alunos]))
+        t_http, t_ws = asyncio.run(medir(sessao.id, [a.id for a in alunos], main.criar_token(prof.email)))
         t0 = time.perf_counter()
         rel = main.encerrar_sessao(sessao.id, professor=prof, db=db)
         t_encerrar = (time.perf_counter() - t0) * 1000
