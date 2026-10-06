@@ -46,7 +46,7 @@ New-Item -ItemType Directory -Force -Path $Pacote | Out-Null
 # Arquivos do Git (inclui os novos ainda nao commitados), respeitando o .gitignore
 Push-Location $Raiz
 try {
-    $arquivos = git ls-files --cached --others --exclude-standard -- backend ia painel database instalar.ps1 PASSO_A_PASSO.md
+    $arquivos = git ls-files --cached --others --exclude-standard -- backend ia painel database instalar.ps1 desinstalar.ps1 PASSO_A_PASSO.md
     if ($LASTEXITCODE -ne 0) { throw "git ls-files falhou" }
 } finally { Pop-Location }
 $arquivos = @($arquivos | Where-Object { $_ -and $_ -notmatch "(^|/)(testes|__pycache__)/" -and (Test-Path (Join-Path $Raiz $_)) })

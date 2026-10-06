@@ -23,7 +23,7 @@ from fastapi import HTTPException  # noqa: E402
 from models import Aluno, Professor, RegistroPresenca, Sala, Sessao, Turma  # noqa: E402
 from schemas import PrimeiroAcessoIn  # noqa: E402
 
-B = "http://127.0.0.1:8000"
+B = os.getenv("LIVEPRESENCEAI_BACKEND", "http://127.0.0.1:8000")
 K = {"X-API-Key": main.CHAVE_MODULO_IA}
 falhas = []
 

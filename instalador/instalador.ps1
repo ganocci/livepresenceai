@@ -245,6 +245,14 @@ function Instalar {
     if ($papel -eq "Sala" -and -not $txtChave.Text.Trim()) {
         Mensagem "Informe a chave do módulo de IA (está no painel do computador servidor)." "Warning"; return
     }
+    # Reinstalacao com o sistema aberto: os arquivos em uso nao poderiam ser substituidos
+    $abertos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$pasta\", [StringComparison]::OrdinalIgnoreCase) })
+    if ($abertos.Count -and -not $Simular) {
+        Mensagem ("O LivePresenceAI está aberto neste computador. Feche o painel (ele desliga o servidor e a " +
+                  "câmera) e clique em Instalar de novo.") "Warning"
+        return
+    }
     $script:pasta = $pasta
     foreach ($c in @($txtChave, $txtSenha, $txtPasta, $botao, $botaoFechar) + @($radios.Values)) { $c.Enabled = $false }
     $progresso.Visible = $true

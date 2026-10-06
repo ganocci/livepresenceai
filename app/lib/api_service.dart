@@ -105,7 +105,9 @@ class ApiService {
     } finally {
       teste.close();
     }
-    final anterior = apiBaseUrl;
+    // Mesmo servidor com outro IP (o roteador trocou o endereço) = mesmo certificado: a sessão continua
+    // valendo. Outro certificado é outro servidor: o token do professor não pode ir para ele.
+    final mesmoServidor = _certificado != null && _certificado == servidor.certificadoSha256;
     _usarServidor(servidor.url, servidor.certificadoSha256);
     await _storage.write(key: _servidorKey, value: servidor.url);
     if (servidor.certificadoSha256 != null) {
@@ -113,8 +115,7 @@ class ApiService {
     } else {
       await _storage.delete(key: _certificadoKey);
     }
-    // Mesmo servidor com outro IP (ex.: o roteador trocou o endereço): a sessão continua valendo
-    if (Uri.parse(anterior).port != Uri.parse(servidor.url).port) await logout();
+    if (!mesmoServidor) await logout();
   }
 
   /// Carrega o endereço do servidor salvo (celular/desenvolvimento). No app web de produção, o servidor é
@@ -369,12 +370,26 @@ class ApiService {
       await _get('/sessoes/$sessaoId/relatorio') as Map<String, dynamic>;
 
   /// GET /sessoes/{id}/exportar?formato=csv|xlsx|pdf -> conteúdo e nome do arquivo.
-  static Future<({Uint8List bytes, String nome, String tipo})> exportar(int sessaoId, String formato) async {
+  static Future<({Uint8List bytes, String nome, String tipo})> exportar(int sessaoId, String formato) =>
+      _baixar('/sessoes/$sessaoId/exportar?formato=$formato', 'chamada_aula$sessaoId.$formato');
+
+  /// GET /turmas/{id}/frequencia/exportar?formato=csv|xlsx|pdf (RN-16).
+  static Future<({Uint8List bytes, String nome, String tipo})> exportarFrequencia(int turmaId, String formato) =>
+      _baixar('/turmas/$turmaId/frequencia/exportar?formato=$formato', 'frequencia_turma$turmaId.$formato');
+
+  /// GET /turmas/{id}/frequencia -> frequência acumulada de cada aluno nas aulas encerradas (RN-16).
+  static Future<Map<String, dynamic>> frequencia(int turmaId) async =>
+      await _get('/turmas/$turmaId/frequencia') as Map<String, dynamic>;
+
+  /// GET /sessoes/{id}/camera -> {situacao: conectada|aguardando|sem_sinal|sem_camera, mensagem}.
+  static Future<Map<String, dynamic>> cameraDaSessao(int sessaoId) async =>
+      await _get('/sessoes/$sessaoId/camera') as Map<String, dynamic>;
+
+  static Future<({Uint8List bytes, String nome, String tipo})> _baixar(String caminho, String nomePadrao) async {
     http.Response resposta;
     try {
       resposta = await _cliente
-          .get(Uri.parse('$apiBaseUrl/sessoes/$sessaoId/exportar?formato=$formato'),
-              headers: await cabecalhosAutenticados())
+          .get(Uri.parse('$apiBaseUrl$caminho'), headers: await cabecalhosAutenticados())
           .timeout(const Duration(seconds: 30));
     } catch (e) {
       throw _erroDeRede(e);
@@ -383,8 +398,7 @@ class ApiService {
       await _tratar(resposta); // lança a ApiException com a mensagem do backend
     }
     final disposicao = resposta.headers['content-disposition'] ?? '';
-    final nome = RegExp(r'filename="([^"]+)"').firstMatch(disposicao)?.group(1) ??
-        'chamada_aula$sessaoId.$formato';
+    final nome = RegExp(r'filename="([^"]+)"').firstMatch(disposicao)?.group(1) ?? nomePadrao;
     final tipo = resposta.headers['content-type'] ?? 'application/octet-stream';
     return (bytes: resposta.bodyBytes, nome: nome, tipo: tipo);
   }

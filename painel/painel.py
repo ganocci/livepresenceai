@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import webbrowser
 from tkinter import messagebox, ttk
@@ -130,6 +131,20 @@ class Painel:
         self.var_windows = tk.BooleanVar(value=os.path.exists(ATALHO_INICIAR))
         tk.Checkbutton(geral, text="Iniciar com o Windows", variable=self.var_windows, bg=FUNDO,
                        activebackground=FUNDO, command=self.alternar_inicio_windows).pack(side="left", padx=12)
+        if self.config["servidor"].get("ativo", True):
+            # Copia de seguranca do banco: automatica uma vez por dia com o servidor ligado, ou pelo botao
+            linha = tk.Frame(r, bg=FUNDO)
+            linha.pack(fill="x", padx=14)
+            self.bt_backup = ttk.Button(linha, text="Fazer cópia de segurança", style="Cinza.TButton",
+                                        command=self.copia_de_seguranca)
+            self.bt_backup.pack(side="left")
+            ttk.Button(linha, text="Abrir pasta", style="Cinza.TButton", command=self._abrir_pasta_backups).pack(
+                side="left", padx=6)
+            self.txt_backup = tk.Label(linha, text="", bg=FUNDO, fg=CINZA, font=("Segoe UI", 9))
+            self.txt_backup.pack(side="left", padx=6)
+            self._backup_rodando = False
+            self._backup_falhou_em = 0.0  # automatica que falhou espera 1 h para tentar de novo
+            self._mostrar_ultimo_backup()
 
         # Registros
         abas = ttk.Notebook(r)
@@ -324,6 +339,47 @@ class Painel:
         self.config["iniciar_com_windows"] = self.var_windows.get()
         cfg.salvar(self.config)
 
+    # ---------------------- copia de seguranca ----------------------
+
+    def _mostrar_ultimo_backup(self, texto: str = None) -> None:
+        if texto is None:
+            ultimo = servicos.ultimo_backup()
+            texto = ("Última cópia: " + time.strftime("%d/%m/%Y %H:%M", time.localtime(os.path.getmtime(ultimo)))
+                     if ultimo else "Nenhuma cópia ainda") + " · automática uma vez por dia"
+        self.txt_backup.config(text=texto)
+
+    def copia_de_seguranca(self, automatica: bool = False) -> None:
+        if self._backup_rodando:
+            return
+        self._backup_rodando = True
+        self.bt_backup.config(state="disabled")
+        self._mostrar_ultimo_backup("Fazendo a cópia de segurança…")
+
+        def tarefa():
+            try:
+                caminho, erro = servicos.fazer_backup(self.config), None
+            except Exception as e:  # noqa: BLE001 - qualquer falha vira mensagem para o usuario
+                caminho, erro = None, str(e)
+            self.raiz.after(0, lambda: self._backup_concluido(caminho, erro, automatica))
+        threading.Thread(target=tarefa, daemon=True).start()
+
+    def _backup_concluido(self, caminho, erro, automatica: bool) -> None:
+        self._backup_rodando = False
+        self.bt_backup.config(state="normal")
+        self._mostrar_ultimo_backup()
+        if erro:
+            self._backup_falhou_em = time.time() if automatica else self._backup_falhou_em
+            self._mostrar_ultimo_backup("A última cópia automática falhou; tente pelo botão" if automatica else None)
+            if not automatica:
+                messagebox.showerror("LivePresenceAI", erro)
+        elif not automatica:
+            messagebox.showinfo("LivePresenceAI", f"Cópia de segurança salva em:\n{caminho}\n\nGuarde também uma "
+                                                  "cópia fora deste computador (pen drive ou nuvem da instituição).")
+
+    def _abrir_pasta_backups(self) -> None:
+        os.makedirs(servicos.PASTA_BACKUPS, exist_ok=True)
+        os.startfile(servicos.PASTA_BACKUPS)
+
     def fechar(self) -> None:
         if self.servidor.rodando or self.sala.rodando:
             if not messagebox.askyesno("LivePresenceAI", "Fechar o painel desliga o servidor e o reconhecimento "
@@ -357,8 +413,11 @@ class Painel:
         self.bt_srv.config(text="Desligar servidor" if self.servidor.rodando else "Ligar servidor")
         enderecos = servicos.enderecos_para_celulares(self.config)
         self.txt_enderecos.config(
-            text=("Nos celulares, use o endereço: " + "  ou  ".join(enderecos)
-                  + f"\nApp Android para instalar: {enderecos[0]}/android") if enderecos else "")
+            text=(f"App Android: baixe em {enderecos[0]}/android (no mesmo Wi-Fi, ele encontra o servidor sozinho)"
+                  "\nPelo navegador: " + "  ou  ".join(enderecos)) if enderecos else "")
+        if (servidor and banco and hasattr(self, "txt_backup") and not self._backup_rodando
+                and time.time() - self._backup_falhou_em >= 3600 and servicos.backup_vencido()):
+            self.copia_de_seguranca(automatica=True)
         if self.sala.rodando:
             self.bola_sala.config(fg=VERDE)
             self.txt_sala.config(text=f"Reconhecimento ligado na {self.config['sala'].get('sala_nome') or 'sala'}")

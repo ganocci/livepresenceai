@@ -20,12 +20,18 @@ Uso:
   python modulo_reconhecimento.py --turma 1 --camera 1 --intervalo 3
   python modulo_reconhecimento.py --turma 1 --sem-rastreamento      # so rostos (modo da etapa 1)
   python modulo_reconhecimento.py --turma 1 --imagem foto.jpg      # teste sem camera
+  python modulo_reconhecimento.py --turma 1 --medir e5.csv --duracao 300   # experimento E5 (desempenho)
 
 A prova de vida (anti-spoofing MiniFASNet do InsightFace) recusa fotos e telas mostradas a camera: um rosto
 recusado nao e reconhecido e nao identifica nenhuma trilha.
 """
 import argparse
+import contextlib
+import csv
 import json
+import os
+import subprocess
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -40,6 +46,99 @@ ESPERA_SEM_CHAMADA = 5   # segundos entre consultas enquanto nao ha chamada aber
 ATUALIZAR_GALERIA = 30   # segundos: recarrega cadastros feitos durante a aula
 
 VERDE, LARANJA, AZUL, CINZA, VERMELHO = (0, 200, 0), (0, 140, 255), (255, 140, 0), (160, 160, 160), (0, 0, 255)
+
+
+class Medidor:
+    """
+    Experimento E5: tempo de cada etapa por quadro, latencia da captura ao registro no backend e uso de CPU,
+    memoria e GPU (amostras a cada 2 s). O CSV e resumido por "experimentos.py desempenho".
+    """
+
+    CAMPOS = ["tipo", "momento", "modo", "provedor", "captura_ms", "rastreamento_ms", "deteccao_ms", "prova_vida_ms",
+              "reconhecimento_ms", "processamento_ms", "rostos", "trilhas", "latencia_ms", "http_ms",
+              "cpu_processo_pct", "cpu_sistema_pct", "memoria_mb", "gpu_pct", "gpu_memoria_mb"]
+
+    def __init__(self, caminho: str, modo: str, provedor: str):
+        os.makedirs(os.path.dirname(os.path.abspath(caminho)), exist_ok=True)
+        self.arquivo = open(caminho, "w", newline="", encoding="utf-8")
+        self.escritor = csv.DictWriter(self.arquivo, fieldnames=self.CAMPOS, delimiter=";")
+        self.escritor.writeheader()
+        self.trava = threading.Lock()
+        self.modo, self.provedor = modo, provedor
+        self.etapas = {}
+        self.quadro_em = 0.0
+        self.rostos = self.trilhas = 0
+        self.inicio = None
+        self.parar = threading.Event()
+        threading.Thread(target=self._recursos, daemon=True).start()
+
+    def _gravar(self, linha: dict) -> None:
+        with self.trava:
+            if not self.arquivo.closed:
+                self.escritor.writerow(linha)
+
+    @contextlib.contextmanager
+    def etapa(self, nome: str):
+        inicio = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.etapas[nome] = self.etapas.get(nome, 0.0) + (time.perf_counter() - inicio) * 1000
+
+    def novo_quadro(self, espera_ms: float) -> None:
+        self.inicio = self.inicio or time.time()
+        self.quadro_em = time.time()
+        self.etapas = {"captura": espera_ms}
+        self.rostos = self.trilhas = 0
+
+    def fim_quadro(self) -> None:
+        self._gravar({"tipo": "quadro", "momento": f"{self.quadro_em:.3f}", "modo": self.modo, "provedor": self.provedor,
+                      "captura_ms": f"{self.etapas.get('captura', 0):.2f}",
+                      "rastreamento_ms": f"{self.etapas.get('rastreamento', 0):.2f}",
+                      "deteccao_ms": f"{self.etapas.get('deteccao', 0):.2f}",
+                      "prova_vida_ms": f"{self.etapas.get('prova_vida', 0):.2f}",
+                      "reconhecimento_ms": f"{self.etapas.get('reconhecimento', 0):.2f}",
+                      "processamento_ms": f"{(time.time() - self.quadro_em) * 1000:.2f}",
+                      "rostos": self.rostos, "trilhas": self.trilhas})
+
+    def envio(self, http_ms: float) -> None:
+        self._gravar({"tipo": "envio", "momento": f"{time.time():.3f}",
+                      "latencia_ms": f"{(time.time() - self.quadro_em) * 1000:.2f}", "http_ms": f"{http_ms:.2f}"})
+
+    def _recursos(self) -> None:
+        import psutil  # instalado com o ultralytics
+
+        processo = psutil.Process()
+        processo.cpu_percent(None)
+        psutil.cpu_percent(None)
+        nucleos = psutil.cpu_count() or 1
+        while not self.parar.wait(2.0):
+            linha = {"tipo": "recurso", "momento": f"{time.time():.3f}",
+                     "cpu_processo_pct": f"{processo.cpu_percent(None) / nucleos:.1f}",
+                     "cpu_sistema_pct": f"{psutil.cpu_percent(None):.1f}",
+                     "memoria_mb": f"{processo.memory_info().rss / 2**20:.0f}"}
+            try:  # GPU NVIDIA, se houver
+                saida = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.used",
+                                        "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5,
+                                       creationflags=0x08000000 if os.name == "nt" else 0)
+                gpu, memoria = saida.stdout.strip().splitlines()[0].split(",")
+                linha.update(gpu_pct=gpu.strip(), gpu_memoria_mb=memoria.strip())
+            except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+                pass
+            if self.inicio:
+                self._gravar(linha)
+
+    def fechar(self) -> None:
+        self.parar.set()
+        with self.trava:
+            self.arquivo.close()
+
+
+MEDIDOR: Optional[Medidor] = None
+
+
+def etapa(nome: str):
+    return MEDIDOR.etapa(nome) if MEDIDOR else contextlib.nullcontext()
 
 
 def log(texto: str) -> None:
@@ -89,8 +188,11 @@ class Estado:
 def enviar(estado: Estado, aluno_id: int, similaridade: float, origem: str) -> None:
     nome = estado.galeria.nomes[aluno_id]
     try:
+        inicio = time.perf_counter()
         r = api("POST", f"/sessoes/{estado.sessao_id}/reconhecimento",
                 json={"aluno_id": aluno_id, "confianca": round(max(0.0, min(1.0, similaridade)), 4)})
+        if MEDIDOR and r.status_code == 200:
+            MEDIDOR.envio((time.perf_counter() - inicio) * 1000)
     except requests.RequestException:
         log(f"{nome}: backend fora do ar, envio perdido")
         return
@@ -122,7 +224,8 @@ _ultimo_aviso_vida = 0.0
 def passou_prova_de_vida(quadro, reconhecedor: Reconhecedor, rosto) -> bool:
     """Rosto recusado (foto/tela) ou inconclusivo (cortado na borda) e marcado em vermelho e ignorado."""
     global _ultimo_aviso_vida
-    vivo = reconhecedor.vivo(quadro, rosto)
+    with etapa("prova_vida"):
+        vivo = reconhecedor.vivo(quadro, rosto)
     if vivo:
         return True
     escore = reconhecedor.escore_vida(rosto)
@@ -136,7 +239,11 @@ def passou_prova_de_vida(quadro, reconhecedor: Reconhecedor, rosto) -> bool:
 
 def processar_sem_rastreamento(quadro, reconhecedor: Reconhecedor, estado: Estado, envios: Envios) -> None:
     """Etapa 1: cada rosto visivel e reconhecido em todo quadro; sem rosto visivel, nada e enviado."""
-    for rosto in reconhecedor.rostos(quadro):
+    with etapa("deteccao"):  # neste modo, deteccao e reconhecimento saem juntos do InsightFace
+        rostos = reconhecedor.rostos(quadro)
+    if MEDIDOR:
+        MEDIDOR.rostos = len(rostos)
+    for rosto in rostos:
         if not passou_prova_de_vida(quadro, reconhecedor, rosto):
             continue
         aluno_id, similaridade = estado.galeria.identificar(rosto.normed_embedding)
@@ -160,14 +267,20 @@ def processar_com_rastreamento(quadro, reconhecedor: Reconhecedor, rastreador, i
 
     agora = time.time()
     antes = {t: i.aluno_id for t, i in identidades.por_trilha.items()}
-    trilhas = rastreador.atualizar(quadro)
-    for rosto in reconhecedor.detectar(quadro):
+    with etapa("rastreamento"):
+        trilhas = rastreador.atualizar(quadro)
+    with etapa("deteccao"):
+        rostos = reconhecedor.detectar(quadro)
+    if MEDIDOR:
+        MEDIDOR.rostos, MEDIDOR.trilhas = len(rostos), len(trilhas)
+    for rosto in rostos:
         trilha = trilha_do_rosto(rosto, trilhas)
         if trilha is not None and not identidades.precisa_reconhecer(trilha.id, agora):
             continue  # trilha ja identificada recentemente: dispensa o reconhecimento
         if not passou_prova_de_vida(quadro, reconhecedor, rosto):
             continue  # foto/tela: nao identifica nem renova a identidade de nenhuma trilha
-        aluno_id, similaridade = estado.galeria.identificar(reconhecedor.extrair(quadro, rosto))
+        with etapa("reconhecimento"):
+            aluno_id, similaridade = estado.galeria.identificar(reconhecedor.extrair(quadro, rosto))
         aceito = aluno_id is not None and similaridade >= estado.confianca_minima
         if trilha is not None:
             identidades.registrar(trilha.id, aluno_id, similaridade, estado.confianca_minima, agora)
@@ -211,8 +324,15 @@ def executar(args) -> None:
     envios = Envios(estado, args.intervalo)
     sessao_anterior = None
     inicio_fps, quadros, fps = time.time(), 0, 0.0
+    global MEDIDOR
+    if args.medir:
+        MEDIDOR = Medidor(args.medir, modo, reconhecedor.provedor)
+        log(f"Medindo o desempenho em {args.medir} enquanto houver chamada aberta"
+            + (f" (por {args.duracao:.0f} s)" if args.duracao else "") + ".")
+    fim_espera = time.perf_counter()
 
     for quadro in abrir_fonte(args.camera, args.imagem, args.video):
+        espera_ms = (time.perf_counter() - fim_espera) * 1000
         estado.atualizar()
         if estado.sessao_id != sessao_anterior:
             # Nova chamada (ou fim dela): identidades e limites de envio recomecam do zero
@@ -222,10 +342,17 @@ def executar(args) -> None:
                 identidades.limpar()
 
         if estado.sessao_id:
+            if MEDIDOR:
+                if args.duracao and MEDIDOR.inicio and time.time() - MEDIDOR.inicio >= args.duracao:
+                    log("Medicao concluida.")
+                    break
+                MEDIDOR.novo_quadro(espera_ms)
             if rastreador:
                 processar_com_rastreamento(quadro, reconhecedor, rastreador, identidades, estado, envios)
             else:
                 processar_sem_rastreamento(quadro, reconhecedor, estado, envios)
+            if MEDIDOR:
+                MEDIDOR.fim_quadro()
             status = f"Sessao #{estado.sessao_id} | {len(estado.galeria)} cadastrados | {fps:.1f} q/s"
         else:
             status = f"{estado.rotulo.capitalize()}: aguardando o professor abrir a chamada"
@@ -239,7 +366,11 @@ def executar(args) -> None:
             cv2.imshow("LivePresenceAI - reconhecimento", quadro)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+        fim_espera = time.perf_counter()
     cv2.destroyAllWindows()
+    if MEDIDOR:
+        MEDIDOR.fechar()
+        log(f"Resumo: python experimentos.py desempenho {args.medir}")
 
 
 def main() -> None:
@@ -257,6 +388,8 @@ def main() -> None:
     parser.add_argument("--sem-janela", action="store_true", help="nao abre a janela de video")
     parser.add_argument("--sem-rastreamento", action="store_true",
                         help="desliga YOLOv8 + DeepSORT: reconhece so rostos visiveis (modo da etapa 1)")
+    parser.add_argument("--medir", metavar="CSV", help="experimento E5: grava tempos, latencia e uso de CPU/GPU")
+    parser.add_argument("--duracao", type=float, help="com --medir: encerra apos N segundos de chamada aberta")
     parser.add_argument("--sem-prova-de-vida", action="store_true",
                         help="desliga a prova de vida (somente para experimentos)")
     args = parser.parse_args()

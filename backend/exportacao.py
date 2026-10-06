@@ -12,7 +12,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from schemas import RelatorioSessao, SituacaoAlunoOut
+from schemas import FrequenciaTurmaOut, RelatorioSessao, SituacaoAlunoOut
 
 FUSO_BRASILIA = timezone(timedelta(hours=-3))
 CABECALHO = ["Nome", "RA", "Situação", "Entrada", "Permanência", "Percentual (%)", "Observação"]
@@ -173,3 +173,163 @@ def gerar(rel: RelatorioSessao, formato: str) -> Tuple[bytes, str, str]:
     """Conteudo, tipo MIME e nome do arquivo."""
     geradores = {"csv": gerar_csv, "xlsx": gerar_xlsx, "pdf": gerar_pdf}
     return geradores[formato](rel), TIPOS[formato], nome_arquivo(rel, formato)
+
+
+# ---------------------------------------------------------------------------
+# Frequencia acumulada da turma (RN-16)
+# ---------------------------------------------------------------------------
+
+CABECALHO_FREQUENCIA = ["Nome", "RA", "Aulas", "Presenças", "Faltas", "Frequência (%)", "Situação", "Ajustes manuais"]
+
+
+def _metadados_frequencia(freq: FrequenciaTurmaOut) -> List[Tuple[str, str]]:
+    periodo = (f"{_local(freq.aulas[0].inicio):%d/%m/%Y} a {_local(freq.aulas[-1].inicio):%d/%m/%Y}"
+               if freq.aulas else "-")
+    return [
+        ("Turma", freq.turma_nome),
+        ("Professor", freq.professor_nome or "-"),
+        ("Período", periodo),
+        ("Aulas encerradas", str(freq.total_aulas)),
+        ("Frequência mínima", f"{_percentual(freq.frequencia_minima)}% das aulas"),
+        ("Presença em cada aula", f"{_percentual(freq.frequencia_minima_aula)}% do tempo de aula"),
+        ("Alunos abaixo do mínimo", str(freq.alunos_abaixo_do_minimo)),
+    ]
+
+
+def _situacao_frequencia(aluno) -> str:
+    if aluno.percentual is None:
+        return "Sem aulas"
+    return "Abaixo do mínimo" if aluno.abaixo_do_minimo else "Regular"
+
+
+def _linhas_frequencia(freq: FrequenciaTurmaOut) -> List[list]:
+    return [[a.nome, a.ra or "-", a.aulas, a.presencas, a.faltas, a.percentual, _situacao_frequencia(a),
+             a.ajustes_manuais] for a in freq.alunos]
+
+
+def _datas_aulas(freq: FrequenciaTurmaOut) -> List[str]:
+    return [f"{_local(a.inicio):%d/%m %H:%M}" for a in freq.aulas]
+
+
+def nome_arquivo_frequencia(freq: FrequenciaTurmaOut, formato: str) -> str:
+    turma = unicodedata.normalize("NFKD", freq.turma_nome or "turma").encode("ascii", "ignore").decode()
+    turma = re.sub(r"[^A-Za-z0-9]+", "_", turma).strip("_").lower() or "turma"
+    return f"frequencia_{turma}_{datetime.now(FUSO_BRASILIA):%Y-%m-%d}.{formato}"
+
+
+def gerar_frequencia_csv(freq: FrequenciaTurmaOut) -> bytes:
+    saida = io.StringIO()
+    escritor = csv.writer(saida, delimiter=";", lineterminator="\r\n")
+    for chave, valor in _metadados_frequencia(freq):
+        escritor.writerow([chave, valor])
+    escritor.writerow([])
+    escritor.writerow(CABECALHO_FREQUENCIA + _datas_aulas(freq))
+    for aluno, linha in zip(freq.alunos, _linhas_frequencia(freq)):
+        percentual = "-" if linha[5] is None else _percentual(linha[5])
+        escritor.writerow(linha[:5] + [percentual] + linha[6:] + [p or "" for p in aluno.por_aula])
+    escritor.writerow([])
+    escritor.writerow(["P = presença; F = falta; vazio = o aluno ainda não fazia parte da turma nessa aula"])
+    return saida.getvalue().encode("utf-8-sig")
+
+
+def gerar_frequencia_xlsx(freq: FrequenciaTurmaOut) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    def cabecalho(folha, valores):
+        folha.append(valores)
+        linha = folha.max_row
+        for celula in folha[linha]:
+            celula.font = Font(bold=True, color="FFFFFF")
+            celula.fill = PatternFill("solid", fgColor="1F4E79")
+            celula.alignment = Alignment(horizontal="center", wrap_text=True)
+        return linha
+
+    livro = Workbook()
+    folha = livro.active
+    folha.title = "Frequência"
+    folha.append(["Frequência da turma - LivePresenceAI"])
+    folha["A1"].font = Font(bold=True, size=14)
+    for chave, valor in _metadados_frequencia(freq):
+        folha.append([chave, valor])
+        folha.cell(row=folha.max_row, column=1).font = Font(bold=True)
+    folha.append([])
+    inicio = cabecalho(folha, CABECALHO_FREQUENCIA)
+    vermelho = Font(color="C00000", bold=True)
+    for aluno, linha in zip(freq.alunos, _linhas_frequencia(freq)):
+        folha.append(linha)
+        folha.cell(row=folha.max_row, column=6).number_format = "0.00"
+        if aluno.abaixo_do_minimo:
+            folha.cell(row=folha.max_row, column=7).font = vermelho
+    folha.freeze_panes = folha.cell(row=inicio + 1, column=1)
+    for coluna, largura in zip("ABCDEFGH", (34, 14, 8, 11, 8, 15, 18, 16)):
+        folha.column_dimensions[coluna].width = largura
+
+    # Grade aluno x aula (como o diario de classe)
+    grade = livro.create_sheet("Por aula")
+    inicio = cabecalho(grade, ["Nome", "RA"] + _datas_aulas(freq))
+    cores = {"P": PatternFill("solid", fgColor="E2F0D9"), "F": PatternFill("solid", fgColor="FCE4E4")}
+    for aluno in freq.alunos:
+        grade.append([aluno.nome, aluno.ra or "-"] + [p or "" for p in aluno.por_aula])
+        for coluna, valor in enumerate(aluno.por_aula, start=3):
+            celula = grade.cell(row=grade.max_row, column=coluna)
+            celula.alignment = Alignment(horizontal="center")
+            if valor:
+                celula.fill = cores[valor]
+    grade.freeze_panes = grade.cell(row=inicio + 1, column=3)
+    grade.column_dimensions["A"].width = 34
+    grade.column_dimensions["B"].width = 14
+    for coluna in range(3, 3 + len(freq.aulas)):
+        grade.column_dimensions[get_column_letter(coluna)].width = 11
+    grade.append([])
+    grade.append(["P = presença; F = falta; vazio = o aluno ainda não fazia parte da turma nessa aula"])
+    saida = io.BytesIO()
+    livro.save(saida)
+    return saida.getvalue()
+
+
+def gerar_frequencia_pdf(freq: FrequenciaTurmaOut) -> bytes:
+    from fpdf import FPDF
+    from fpdf.fonts import FontFace
+
+    gerado_em = datetime.now(FUSO_BRASILIA).strftime("%d/%m/%Y %H:%M")
+
+    class Documento(FPDF):
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("helvetica", size=8)
+            self.set_text_color(110)
+            self.cell(0, 6, f"Gerado pelo LivePresenceAI em {gerado_em} (horário de Brasília)", align="L")
+            self.cell(0, 6, f"Página {self.page_no()}/{{nb}}", align="R")
+
+    pdf = Documento(orientation="P", unit="mm", format="A4")
+    pdf.set_title(f"Frequência - {freq.turma_nome}")
+    pdf.set_author("LivePresenceAI")
+    pdf.add_page()
+    pdf.set_font("helvetica", "B", 15)
+    pdf.cell(0, 9, "Frequência da turma", new_x="LMARGIN", new_y="NEXT")
+    for chave, valor in _metadados_frequencia(freq):
+        pdf.set_font("helvetica", "B", 10)
+        pdf.cell(48, 6, f"{chave}:")
+        pdf.set_font("helvetica", size=10)
+        pdf.cell(0, 6, valor, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+    pdf.set_font("helvetica", size=9)
+    estilo = FontFace(emphasis="BOLD", color=255, fill_color=(31, 78, 121))
+    alerta = FontFace(emphasis="BOLD", color=(192, 0, 0))
+    with pdf.table(col_widths=(58, 24, 14, 18, 14, 22, 30), headings_style=estilo, line_height=6,
+                   text_align=("LEFT", "LEFT", "CENTER", "CENTER", "CENTER", "RIGHT", "LEFT")) as tabela:
+        tabela.row(CABECALHO_FREQUENCIA[:7])
+        for aluno, linha in zip(freq.alunos, _linhas_frequencia(freq)):
+            linha_pdf = tabela.row()
+            percentual = "-" if linha[5] is None else _percentual(linha[5])
+            for valor in [str(v) for v in linha[:5]] + [percentual]:
+                linha_pdf.cell(valor)
+            linha_pdf.cell(linha[6], style=alerta if aluno.abaixo_do_minimo else None)
+    return bytes(pdf.output())
+
+
+def gerar_frequencia(freq: FrequenciaTurmaOut, formato: str) -> Tuple[bytes, str, str]:
+    geradores = {"csv": gerar_frequencia_csv, "xlsx": gerar_frequencia_xlsx, "pdf": gerar_frequencia_pdf}
+    return geradores[formato](freq), TIPOS[formato], nome_arquivo_frequencia(freq, formato)

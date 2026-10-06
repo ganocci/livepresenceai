@@ -21,7 +21,8 @@ import main  # noqa: E402
 from database import SessionLocal  # noqa: E402
 from models import Aluno, Professor, RegistroPresenca, Sessao, Turma  # noqa: E402
 
-B, WS = "http://127.0.0.1:8000", "ws://127.0.0.1:8000"
+B = os.getenv("LIVEPRESENCEAI_BACKEND", "http://127.0.0.1:8000")
+WS = B.replace("http", "ws", 1)
 falhas = []
 
 

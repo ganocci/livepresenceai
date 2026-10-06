@@ -75,19 +75,25 @@ function VersaoPython($exe, [string[]]$pre) {
     [void][int]::TryParse("$($v | Select-Object -Last 1)".Trim(), [ref]$numero)
     return $numero
 }
-function EncontrarPython {
+function EncontrarPython([switch]$SoParaTodos) {
+    # Como administrador, so serve um Python instalado para todos os usuarios (Program Files): os ambientes
+    # do sistema dependem dele, e o perfil de outra conta (a que aprovou o UAC) pode nao ser acessivel
     $candidatos = New-Object System.Collections.ArrayList
-    foreach ($padrao in @("$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe", "$env:ProgramFiles\Python3*\python.exe")) {
+    $padroes = if ($SoParaTodos) { @("$env:ProgramFiles\Python3*\python.exe") }
+               else { @("$env:ProgramFiles\Python3*\python.exe", "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe") }
+    foreach ($padrao in $padroes) {
         foreach ($f in (Get-ChildItem $padrao -ErrorAction SilentlyContinue | Sort-Object FullName -Descending)) {
             [void]$candidatos.Add([pscustomobject]@{ Exe = $f.FullName; Pre = [string[]]@() })
         }
     }
-    foreach ($exe in @("py.exe", "$env:SystemRoot\py.exe", "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe")) {
-        $c = Get-Command $exe -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($c) { [void]$candidatos.Add([pscustomobject]@{ Exe = $c.Source; Pre = [string[]]@("-3") }) }
+    if (-not $SoParaTodos) {
+        foreach ($exe in @("py.exe", "$env:SystemRoot\py.exe", "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe")) {
+            $c = Get-Command $exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($c) { [void]$candidatos.Add([pscustomobject]@{ Exe = $c.Source; Pre = [string[]]@("-3") }) }
+        }
+        $c = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($c -and $c.Source -notlike "*WindowsApps*") { [void]$candidatos.Add([pscustomobject]@{ Exe = $c.Source; Pre = [string[]]@() }) }
     }
-    $c = Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($c -and $c.Source -notlike "*WindowsApps*") { [void]$candidatos.Add([pscustomobject]@{ Exe = $c.Source; Pre = [string[]]@() }) }
     foreach ($candidato in $candidatos) {
         if ((VersaoPython $candidato.Exe $candidato.Pre) -ge 312) { return $candidato }
     }
@@ -95,12 +101,13 @@ function EncontrarPython {
 }
 
 Passo "Python 3.12 ou mais novo"
-$py = EncontrarPython
+$py = EncontrarPython -SoParaTodos:$Admin
 if (-not $py) {
-    Aviso "Python nao encontrado; instalando (pode levar alguns minutos)."
+    Aviso "Python $(if ($Admin) { 'para todos os usuarios ' })nao encontrado; instalando (pode levar alguns minutos)."
     Executar "winget install Python.Python.3.14" {
-        winget install --id Python.Python.3.14 -e --silent --accept-source-agreements --accept-package-agreements
-        $script:py = EncontrarPython
+        $escopo = if ($Admin) { @("--scope", "machine") } else { @() }
+        winget install --id Python.Python.3.14 -e --silent @escopo --accept-source-agreements --accept-package-agreements
+        $script:py = EncontrarPython -SoParaTodos:$Admin
         if (-not $script:py) { throw "O Python foi instalado mas nao foi encontrado. Reinicie o computador e rode o instalador de novo." }
     }
 }
@@ -267,8 +274,9 @@ if ($Servidor) {
         Executar "liberar a porta TCP $Porta e a porta UDP $PortaDescoberta na rede" {
             Get-NetFirewallRule -DisplayName "LivePresenceAI" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
             Get-NetFirewallRule -DisplayName "LivePresenceAI (busca na rede)" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-            New-NetFirewallRule -DisplayName "LivePresenceAI" -Direction Inbound -Protocol TCP -LocalPort $Porta -Action Allow | Out-Null
-            New-NetFirewallRule -DisplayName "LivePresenceAI (busca na rede)" -Direction Inbound -Protocol UDP -LocalPort $PortaDescoberta -Action Allow | Out-Null
+            # So a rede local (LocalSubnet): o servidor nao fica acessivel de fora da rede da instituicao
+            New-NetFirewallRule -DisplayName "LivePresenceAI" -Direction Inbound -Protocol TCP -LocalPort $Porta -RemoteAddress LocalSubnet -Action Allow | Out-Null
+            New-NetFirewallRule -DisplayName "LivePresenceAI (busca na rede)" -Direction Inbound -Protocol UDP -LocalPort $PortaDescoberta -RemoteAddress LocalSubnet -Action Allow | Out-Null
             Ok "portas liberadas"
         }
     } else { Aviso "rode o instalador como administrador para liberar as portas $Porta (TCP) e $PortaDescoberta (UDP) no firewall (necessario para os celulares)." }
@@ -294,6 +302,24 @@ if (-not $SemAtalho) {
             $atalho.Save()
         }
         Ok "atalhos criados"
+    }
+}
+
+# ---------------------------------------------------------------- Aplicativos instalados do Windows
+if ($Admin -and -not $SemAtalho) {
+    Passo "Registro em Aplicativos instalados (para desinstalar pelas Configuracoes do Windows)"
+    Executar "registrar LivePresenceAI em Aplicativos instalados" {
+        $chave = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\LivePresenceAI"
+        New-Item -Path $chave -Force | Out-Null
+        $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        $valores = @{
+            DisplayName = "LivePresenceAI"; DisplayVersion = "1.0"; Publisher = "Equipe LivePresenceAI (TCC UNIP)"
+            InstallLocation = $Raiz
+            UninstallString = "`"$powershell`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Raiz\desinstalar.ps1`""
+        }
+        foreach ($nome in $valores.Keys) { New-ItemProperty -Path $chave -Name $nome -Value $valores[$nome] -PropertyType String -Force | Out-Null }
+        foreach ($nome in "NoModify", "NoRepair") { New-ItemProperty -Path $chave -Name $nome -Value 1 -PropertyType DWord -Force | Out-Null }
+        Ok "registrado"
     }
 }
 

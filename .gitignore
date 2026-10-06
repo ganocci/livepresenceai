@@ -32,3 +32,6 @@ config/
 
 # Instalador gerado (instalador/empacotar.ps1)
 dist/
+
+# Dados dos experimentos (medidas de voluntarios): fora do Git
+ia/resultados/

@@ -165,6 +165,67 @@ def banco_aceitando(config: dict) -> bool:
         return False
 
 
+# ---------------------- COPIA DE SEGURANCA (backup do banco) ----------------------
+
+PASTA_BACKUPS = os.path.join(cfg.PASTA_CONFIG, "backups")
+BACKUPS_GUARDADOS = 14  # as mais antigas sao apagadas
+
+
+def _pg_dump() -> Optional[str]:
+    """pg_dump do PostgreSQL instalado (a versao mais nova, que tambem le bancos de versoes anteriores)."""
+    import glob
+    import shutil
+
+    candidatos = glob.glob(os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "PostgreSQL", "*",
+                                        "bin", "pg_dump.exe"))
+    candidatos.sort(key=lambda c: int("".join(ch for ch in os.path.basename(os.path.dirname(os.path.dirname(c)))
+                                              if ch.isdigit()) or 0), reverse=True)
+    return candidatos[0] if candidatos else shutil.which("pg_dump")
+
+
+def ultimo_backup() -> Optional[str]:
+    if not os.path.isdir(PASTA_BACKUPS):
+        return None
+    arquivos = sorted(f for f in os.listdir(PASTA_BACKUPS) if f.endswith(".dump"))
+    return os.path.join(PASTA_BACKUPS, arquivos[-1]) if arquivos else None
+
+
+def backup_vencido(horas: float = 24) -> bool:
+    ultimo = ultimo_backup()
+    return ultimo is None or time.time() - os.path.getmtime(ultimo) >= horas * 3600
+
+
+def fazer_backup(config: dict) -> str:
+    """
+    Copia completa do banco (pg_dump, formato custom) em config/backups/livepresenceai_AAAAMMDD_HHMMSS.dump.
+    Devolve o caminho; levanta RuntimeError com mensagem para o usuario se falhar. Restaurar: ver a
+    documentacao tecnica (secao 17).
+    """
+    pg_dump = _pg_dump()
+    if not pg_dump:
+        raise RuntimeError("pg_dump não encontrado (vem com o PostgreSQL).")
+    endereco = urlparse(config["servidor"]["database_url"].replace("postgresql+psycopg2", "postgresql"))
+    os.makedirs(PASTA_BACKUPS, exist_ok=True)
+    destino = os.path.join(PASTA_BACKUPS, time.strftime("livepresenceai_%Y%m%d_%H%M%S.dump"))
+    ambiente = dict(os.environ, PGPASSWORD=endereco.password or "")
+    comando = [pg_dump, "-h", endereco.hostname or "localhost", "-p", str(endereco.port or 5432),
+               "-U", endereco.username or "livepresenceai", "-Fc", "-f", destino, endereco.path.lstrip("/")]
+    opcoes = dict(p.split("=", 1) for p in endereco.query.split("&") if "=" in p).get("options", "")
+    if "search_path" in opcoes:  # banco num schema proprio (testes): copia so ele
+        from urllib.parse import unquote
+        comando[-1:-1] = ["-n", unquote(opcoes).split("search_path=")[-1].split()[0]]
+    saida = subprocess.run(comando, env=ambiente, capture_output=True, text=True, timeout=600,
+                           creationflags=SEM_JANELA)
+    if saida.returncode != 0 or not os.path.exists(destino):
+        if os.path.exists(destino):
+            os.remove(destino)
+        raise RuntimeError(f"A cópia de segurança falhou: {saida.stderr.strip()[:300]}")
+    antigos = sorted(f for f in os.listdir(PASTA_BACKUPS) if f.endswith(".dump"))[:-BACKUPS_GUARDADOS]
+    for nome in antigos:
+        os.remove(os.path.join(PASTA_BACKUPS, nome))
+    return destino
+
+
 def enderecos_para_celulares(config: dict) -> List[str]:
     s = config["servidor"]
     sys.path.insert(0, os.path.join(cfg.RAIZ, "backend"))

@@ -65,6 +65,10 @@ def _atender(sock: socket.socket) -> None:
     while True:
         try:
             mensagem, (ip, porta) = sock.recvfrom(512)
+        except ConnectionResetError:
+            # Windows: uma resposta anterior foi para uma porta ja fechada (ICMP "porta inalcancavel");
+            # nao e erro do respondedor, que deve continuar atendendo
+            continue
         except OSError:
             return
         if mensagem.strip().startswith(PERGUNTA):
@@ -79,6 +83,8 @@ def iniciar() -> Optional[str]:
     if os.getenv("LIVEPRESENCEAI_DESCOBERTA", "1") == "0":
         return None
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if hasattr(socket, "SIO_UDP_CONNRESET"):  # Windows: nao transforma ICMP de porta fechada em erro de leitura
+        sock.ioctl(socket.SIO_UDP_CONNRESET, False)
     try:
         sock.bind(("0.0.0.0", PORTA_DESCOBERTA))
     except OSError as erro:

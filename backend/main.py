@@ -25,8 +25,9 @@ from schemas import (
     TurmaOut, AlunoOut, SessaoOut, EventoReconhecimento, RelatorioSessao,
     RegistroPresencaOut, SituacaoAlunoOut,
     AlunoCadastroIA, CadastroFacialIn, AlunoGaleriaIA, SessaoAtivaIA,
+    AulaFrequenciaOut, FrequenciaAlunoOut, FrequenciaTurmaOut,
     TurmaIn, AlunoIn, SessaoResumoOut,
-    ProfessorOut, PrimeiroAcessoIn, ProfessorIn, TrocaSenhaIn, SalaOut, SalaIn, AjusteIn, AjusteOut,
+    ProfessorOut, PrimeiroAcessoIn, ProfessorIn, TrocaSenhaIn, SalaOut, SalaIn, AjusteIn, AjusteOut, CameraSalaOut,
 )
 import biometria
 import descoberta
@@ -69,6 +70,9 @@ CONFIANCA_MINIMA = float(os.getenv("CONFIANCA_MINIMA", "0.6"))
 LIMITE_AUSENCIA = timedelta(seconds=float(os.getenv("LIMITE_AUSENCIA_SEGUNDOS", "60")))
 # RN-03: percentual minimo de permanencia para contar presenca; abaixo disso e falta.
 FREQUENCIA_MINIMA = 40.0
+# RN-16: frequencia minima no periodo (% das aulas com presenca). 75% e um valor comum no ensino superior;
+# cada instituicao ajusta a sua regra por variavel de ambiente
+FREQUENCIA_MINIMA_TURMA = float(os.getenv("FREQUENCIA_MINIMA_TURMA", "75"))
 # Sessao aberta ha mais tempo que isso e considerada abandonada (nao e retomada).
 DURACAO_MAXIMA_SESSAO = timedelta(hours=4)
 
@@ -125,8 +129,18 @@ def exigir_chave_ia(x_api_key: Optional[str] = Header(default=None, description=
 APP_WEB_DIR = os.getenv("APP_WEB_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                                     "app", "build", "web"))
 APP_WEB_DISPONIVEL = os.path.isfile(os.path.join(APP_WEB_DIR, "index.html"))
+class _ArquivosSemCacheVelho(StaticFiles):
+    """Pede ao navegador para revalidar (ETag) a cada uso: depois de uma atualizacao, o app novo aparece logo,
+    em vez de uma copia antiga guardada pelo cache heuristico do navegador. Sem mudanca, a resposta e um 304."""
+
+    async def get_response(self, path, scope):
+        resposta = await super().get_response(path, scope)
+        resposta.headers["Cache-Control"] = "no-cache"
+        return resposta
+
+
 if APP_WEB_DISPONIVEL:
-    app.mount("/app", StaticFiles(directory=APP_WEB_DIR, html=True), name="app_web")
+    app.mount("/app", _ArquivosSemCacheVelho(directory=APP_WEB_DIR, html=True), name="app_web")
 
 
 # APK do app Android, para os celulares baixarem pelo navegador em /android (gerado por app/gerar_apk.ps1)
@@ -834,6 +848,68 @@ def historico_turma(turma_id: int, professor: Professor = Depends(obter_professo
     return resumo
 
 
+def _frequencia_turma(turma_id: int, professor: Professor, db: Session) -> FrequenciaTurmaOut:
+    """
+    RN-16: frequencia acumulada de cada aluno nas aulas ENCERRADAS da turma, contando a situacao final de cada
+    aula (com os ajustes manuais da RN-15). Um aluno incluido no meio do periodo so conta as aulas a partir
+    da inclusao, como no relatorio de cada aula.
+    """
+    turma = _turma_do_professor(turma_id, professor, db)
+    sessoes = (db.query(Sessao).filter(Sessao.turma_id == turma.id, Sessao.status == "encerrada")
+               .order_by(Sessao.inicio).all())
+    situacoes: Dict[int, Dict[int, SituacaoAlunoOut]] = {}  # sessao_id -> aluno_id -> situacao
+    for sessao in sessoes:
+        registros = db.query(RegistroPresenca).filter(RegistroPresenca.sessao_id == sessao.id).all()
+        situacoes[sessao.id] = {a.aluno_id: a for a in _montar_relatorio(sessao, registros, db).alunos}
+
+    alunos = {a.id: (a.nome, a.ra) for a in db.query(Aluno).filter(Aluno.turma_id == turma.id)}
+    for por_aluno in situacoes.values():  # quem tem registro antigo e saiu da turma continua no historico
+        for aluno_id, sit in por_aluno.items():
+            alunos.setdefault(aluno_id, (sit.nome, sit.ra))
+
+    linhas = []
+    for aluno_id, (nome, ra) in alunos.items():
+        por_aula = []
+        for sessao in sessoes:
+            sit = situacoes[sessao.id].get(aluno_id)
+            por_aula.append(None if sit is None else ("P" if sit.situacao == "presenca" else "F"))
+        aulas = sum(1 for p in por_aula if p)
+        presencas = por_aula.count("P")
+        ajustes = sum(1 for s in sessoes if (sit := situacoes[s.id].get(aluno_id)) and sit.ajuste_manual)
+        percentual = round(100 * presencas / aulas, 2) if aulas else None
+        linhas.append(FrequenciaAlunoOut(
+            aluno_id=aluno_id, nome=nome, ra=ra, aulas=aulas, presencas=presencas, faltas=aulas - presencas,
+            ajustes_manuais=ajustes, percentual=percentual,
+            abaixo_do_minimo=percentual is not None and percentual < FREQUENCIA_MINIMA_TURMA, por_aula=por_aula))
+    linhas.sort(key=lambda l: l.nome.lower())
+    dono = db.query(Professor).filter(Professor.id == turma.professor_id).first()
+    return FrequenciaTurmaOut(
+        turma_id=turma.id, turma_nome=turma.nome, professor_nome=dono.nome if dono else None,
+        frequencia_minima=FREQUENCIA_MINIMA_TURMA, frequencia_minima_aula=FREQUENCIA_MINIMA,
+        total_aulas=len(sessoes),
+        aulas=[AulaFrequenciaOut(sessao_id=s.id, inicio=s.inicio, fim=s.fim) for s in sessoes],
+        alunos=linhas, alunos_abaixo_do_minimo=sum(1 for l in linhas if l.abaixo_do_minimo))
+
+
+@app.get("/turmas/{turma_id}/frequencia", response_model=FrequenciaTurmaOut)
+def frequencia_turma(turma_id: int, professor: Professor = Depends(obter_professor_atual), db: Session = Depends(get_db)):
+    """Frequencia acumulada de cada aluno nas aulas encerradas da turma (RN-16)."""
+    return _frequencia_turma(turma_id, professor, db)
+
+
+@app.get("/turmas/{turma_id}/frequencia/exportar")
+def exportar_frequencia(
+    turma_id: int,
+    formato: str = Query(..., pattern="^(csv|xlsx|pdf)$", description="csv, xlsx ou pdf"),
+    professor: Professor = Depends(obter_professor_atual),
+    db: Session = Depends(get_db),
+):
+    """Frequencia acumulada como arquivo (XLSX com a grade aluno x aula)."""
+    conteudo, tipo, nome = exportacao.gerar_frequencia(_frequencia_turma(turma_id, professor, db), formato)
+    return Response(content=conteudo, media_type=tipo,
+                    headers={"Content-Disposition": f'attachment; filename="{nome}"'})
+
+
 @app.get("/sessoes/{sessao_id}/relatorio", response_model=RelatorioSessao)
 def relatorio_sessao(sessao_id: int, professor: Professor = Depends(obter_professor_atual), db: Session = Depends(get_db)):
     """Relatorio de uma aula ja encerrada (historico); nao altera nada."""
@@ -921,7 +997,26 @@ def ia_sessao_ativa(turma_id: int, db: Session = Depends(get_db)):
         .order_by(Sessao.inicio.desc())
         .first()
     )
+    _registrar_contato_ia("turma", turma_id, sessao)
     return _sessao_ativa_ia(sessao, db)
+
+
+@app.get("/ia/turmas/{turma_id}/galeria", response_model=SessaoAtivaIA, dependencies=[Depends(exigir_chave_ia)])
+def ia_galeria_turma(turma_id: int, db: Session = Depends(get_db)):
+    """
+    Galeria de vetores da turma sem chamada aberta (sessao_id sempre nulo): usada pelos experimentos E1/E2
+    (ia/experimentos.py), que medem o reconhecimento sem registrar presenca.
+    """
+    turma = db.query(Turma).filter(Turma.id == turma_id).first()
+    if not turma:
+        raise HTTPException(status_code=404, detail="Turma não encontrada")
+    alunos = db.query(Aluno).filter(Aluno.turma_id == turma_id).order_by(Aluno.nome).all()
+    return SessaoAtivaIA(
+        sessao_id=None,
+        turma_nome=turma.nome,
+        confianca_minima=CONFIANCA_MINIMA,
+        alunos=[AlunoGaleriaIA(aluno_id=a.id, nome=a.nome, embedding=a.embedding) for a in alunos if a.embedding and a.consentimento_biometrico_em],
+    )
 
 
 def _sessao_ativa_ia(sessao: Optional[Sessao], db: Session) -> SessaoAtivaIA:
@@ -929,12 +1024,13 @@ def _sessao_ativa_ia(sessao: Optional[Sessao], db: Session) -> SessaoAtivaIA:
     if not sessao:
         return SessaoAtivaIA(sessao_id=None, confianca_minima=CONFIANCA_MINIMA, alunos=[])
     alunos = db.query(Aluno).filter(Aluno.turma_id == sessao.turma_id).order_by(Aluno.nome).all()
-    # Filtrado em Python: registros antigos guardam "sem cadastro" como JSON 'null', que IS NOT NULL nao exclui
+    # Filtrado em Python: registros antigos guardam "sem cadastro" como JSON 'null', que IS NOT NULL nao exclui.
+    # So entra quem tem a autorizacao registrada (RN-12), mesmo que um vetor tenha ficado gravado sem ela
     return SessaoAtivaIA(
         sessao_id=sessao.id,
         turma_nome=sessao.turma.nome,
         confianca_minima=CONFIANCA_MINIMA,
-        alunos=[AlunoGaleriaIA(aluno_id=a.id, nome=a.nome, embedding=a.embedding) for a in alunos if a.embedding],
+        alunos=[AlunoGaleriaIA(aluno_id=a.id, nome=a.nome, embedding=a.embedding) for a in alunos if a.embedding and a.consentimento_biometrico_em],
     )
 
 
@@ -948,7 +1044,60 @@ def ia_listar_salas(db: Session = Depends(get_db)):
 def ia_sessao_ativa_da_sala(sala_id: int, db: Session = Depends(get_db)):
     """Consultado pelo modulo de IA da sala: a chamada aberta nela (de qualquer turma) e a galeria."""
     _sala_existente(sala_id, db)
-    return _sessao_ativa_ia(_sessao_aberta_na_sala(sala_id, db), db)
+    sessao = _sessao_aberta_na_sala(sala_id, db)
+    _registrar_contato_ia("sala", sala_id, sessao)
+    return _sessao_ativa_ia(sessao, db)
+
+
+# ---------------------------------------------------------------------------
+# Situacao da camera da sala: o modulo de IA consulta a chamada ativa periodicamente (a cada 5 s sem
+# chamada e a cada 30 s com chamada); o ultimo contato de cada sala/turma fica em memoria. Reiniciar o
+# servidor zera esses contatos, que voltam na proxima consulta do modulo.
+# ---------------------------------------------------------------------------
+
+CAMERA_SEM_SINAL_APOS = timedelta(seconds=75)   # 2,5 consultas de 30 s sem contato
+CAMERA_TOLERANCIA_INICIO = timedelta(seconds=20)  # tempo para o modulo perceber uma chamada recem-aberta
+_contatos_ia: Dict[tuple, tuple] = {}  # ("sala"|"turma", id) -> (momento, sessao_id informada ao modulo)
+
+
+def _registrar_contato_ia(tipo: str, ident: int, sessao: Optional[Sessao]) -> None:
+    _contatos_ia[(tipo, ident)] = (datetime.utcnow(), sessao.id if sessao else None)
+
+
+def _situacao_camera(sessao: Sessao, agora: Optional[datetime] = None) -> CameraSalaOut:
+    agora = agora or datetime.utcnow()
+    contatos = [c for c in (_contatos_ia.get(("sala", sessao.sala_id)) if sessao.sala_id else None,
+                            _contatos_ia.get(("turma", sessao.turma_id))) if c]
+    if not sessao.sala_id and not contatos:
+        return CameraSalaOut(situacao="sem_camera")  # chamada sem sala e nenhum modulo acompanhando a turma
+    sala = sessao.sala.nome if sessao.sala else "da sala"
+    ultimo = max(contatos, key=lambda c: c[0]) if contatos else None
+    visto = (agora - ultimo[0]).total_seconds() if ultimo else None
+    if ultimo and agora - ultimo[0] <= CAMERA_SEM_SINAL_APOS:
+        if any(c[1] == sessao.id for c in contatos):
+            return CameraSalaOut(situacao="conectada", visto_ha_segundos=visto)
+        return CameraSalaOut(situacao="aguardando", visto_ha_segundos=visto,
+                             mensagem="A câmera está iniciando o reconhecimento desta chamada…")
+    if agora - sessao.inicio <= CAMERA_TOLERANCIA_INICIO:
+        return CameraSalaOut(situacao="aguardando", visto_ha_segundos=visto,
+                             mensagem="Conectando à câmera da sala…")
+    return CameraSalaOut(
+        situacao="sem_sinal", visto_ha_segundos=visto,
+        mensagem=(f"A câmera {'da ' + sala if sessao.sala else sala} não está respondendo. Confira se o computador "
+                  "da sala está ligado e com o reconhecimento ligado no painel. Enquanto isso, ninguém é marcado "
+                  "automaticamente; use o ajuste manual se precisar."))
+
+
+@app.get("/sessoes/{sessao_id}/camera", response_model=CameraSalaOut)
+def camera_da_sessao(sessao_id: int, professor: Professor = Depends(obter_professor_atual),
+                     db: Session = Depends(get_db)):
+    """O app consulta durante a chamada para avisar o professor se a camera da sala parou de responder."""
+    sessao = db.query(Sessao).filter(Sessao.id == sessao_id, Sessao.professor_id == professor.id).first()
+    if not sessao:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada")
+    if sessao.status != "aberta":
+        return CameraSalaOut(situacao="sem_camera")
+    return _situacao_camera(sessao)
 
 
 @app.websocket("/ws/sessoes/{sessao_id}")

@@ -18,6 +18,7 @@ import 'rede/descoberta.dart';
 part 'ajuste.dart';
 part 'cadastro_rosto.dart';
 part 'conta.dart';
+part 'frequencia.dart';
 part 'gestao.dart';
 part 'tema.dart';
 
@@ -333,7 +334,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
                         : const Text('Entrar', style: TextStyle(fontSize: 17)),
                   ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Esqueceu a senha? Peça ao administrador do sistema na sua instituição para definir uma nova.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Cores.textoSecundario, fontSize: 13),
+                  ),
+                  const SizedBox(height: 18),
                   if (!servidorDefinidoPelaPagina)
                     Center(
                       child: TextButton.icon(
@@ -424,6 +431,10 @@ class _ChamadaAtivaScreenState extends State<ChamadaAtivaScreen> {
   StreamSubscription? _assinatura;
   Timer? _timerReconexao;
   Timer? _relogio; // redesenha a tela a cada segundo para atualizar tempos ao vivo
+  // Câmera da sala: situação informada pelo backend (último contato do módulo de IA), consultada a cada 10 s
+  Timer? _timerCamera;
+  String _cameraSituacao = 'sem_camera';
+  String? _cameraMensagem;
 
   @override
   void initState() {
@@ -476,6 +487,60 @@ class _ChamadaAtivaScreenState extends State<ChamadaAtivaScreen> {
       if (mounted) setState(() {});
     });
     _conectarWebSocket();
+    _consultarCamera();
+    _timerCamera ??= Timer.periodic(const Duration(seconds: 10), (_) => _consultarCamera());
+  }
+
+  Future<void> _consultarCamera() async {
+    final sessaoId = _sessaoId;
+    if (sessaoId == null || !_telaAtiva) return;
+    try {
+      final camera = await ApiService.cameraDaSessao(sessaoId);
+      if (!mounted) return;
+      setState(() {
+        _cameraSituacao = camera['situacao'] as String? ?? 'sem_camera';
+        _cameraMensagem = camera['mensagem'] as String?;
+      });
+    } catch (_) {
+      // falha de rede já aparece no indicador do tempo real; mantém a última situação conhecida
+    }
+  }
+
+  Widget _indicadorCamera() {
+    final (icone, cor, dica) = switch (_cameraSituacao) {
+      'conectada' => (Icons.videocam, Cores.verde, 'Câmera da sala reconhecendo'),
+      'aguardando' => (Icons.videocam_outlined, Cores.ambar, _cameraMensagem ?? 'Conectando à câmera…'),
+      _ => (Icons.videocam_off, Cores.vermelho, 'Câmera da sala sem sinal'),
+    };
+    return Tooltip(message: dica, child: Icon(icone, size: 20, color: cor));
+  }
+
+  Widget _avisoCamera() {
+    return Cartao(
+      margem: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: const BoxDecoration(color: Cores.vermelhoClaro, shape: BoxShape.circle),
+            child: const Icon(Icons.videocam_off, color: Cores.vermelho, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Câmera sem sinal', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                const SizedBox(height: 2),
+                Text(_cameraMensagem ?? 'A câmera da sala não está respondendo.',
+                    style: const TextStyle(color: Cores.textoSecundario, fontSize: 13)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Aplica a lista de registros da sessão (formato de RegistroPresencaOut do backend).
@@ -641,6 +706,7 @@ class _ChamadaAtivaScreenState extends State<ChamadaAtivaScreen> {
     _telaAtiva = false;
     _timerReconexao?.cancel();
     _relogio?.cancel();
+    _timerCamera?.cancel();
     _assinatura?.cancel();
     _canal?.sink.close();
   }
@@ -666,6 +732,8 @@ class _ChamadaAtivaScreenState extends State<ChamadaAtivaScreen> {
           ],
         ),
         actions: [
+          if (_sessaoId != null && _cameraSituacao != 'sem_camera')
+            Padding(padding: const EdgeInsets.only(right: 10), child: _indicadorCamera()),
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: Tooltip(
@@ -707,15 +775,18 @@ class _ChamadaAtivaScreenState extends State<ChamadaAtivaScreen> {
         ),
         child: Row(
           children: [
-            Tooltip(
-              message: 'Marca o próximo aluno não detectado (teste sem câmera)',
-              child: OutlinedButton.icon(
-                onPressed: _simularReconhecimento,
-                icon: const Icon(Icons.science_outlined, size: 20),
-                label: const Text('Simular'),
+            // Só em desenvolvimento: em uso real, presença sem câmera é o ajuste manual (com motivo, RN-15)
+            if (kDebugMode) ...[
+              Tooltip(
+                message: 'Marca o próximo aluno não detectado (teste sem câmera)',
+                child: OutlinedButton.icon(
+                  onPressed: _simularReconhecimento,
+                  icon: const Icon(Icons.science_outlined, size: 20),
+                  label: const Text('Simular'),
+                ),
               ),
-            ),
-            const SizedBox(width: 10),
+              const SizedBox(width: 10),
+            ],
             Expanded(
               child: FilledButton.icon(
                 onPressed: _encerrando ? null : _encerrarChamada,
@@ -926,6 +997,7 @@ class _ChamadaAtivaScreenState extends State<ChamadaAtivaScreen> {
     return ListView(
       padding: const EdgeInsets.only(bottom: 12),
       children: [
+        if (_cameraSituacao == 'sem_sinal') _avisoCamera(),
         _cartaoResumo(agora),
         Cartao(
           padding: const EdgeInsets.symmetric(vertical: 6),

@@ -16,7 +16,7 @@ import main  # noqa: E402
 from database import SessionLocal  # noqa: E402
 from models import AjustePresenca, Aluno, Professor, RegistroPresenca, Sessao, Turma  # noqa: E402
 
-B = "http://127.0.0.1:8000"
+B = os.getenv("LIVEPRESENCEAI_BACKEND", "http://127.0.0.1:8000")
 K = {"X-API-Key": main.CHAVE_MODULO_IA}
 falhas = []
 

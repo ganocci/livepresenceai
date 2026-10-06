@@ -208,9 +208,11 @@ class _SelecaoTurmaScreenState extends State<SelecaoTurmaScreen> {
 
   Future<void> _opcoesTurma(Turma turma) async {
     final escolha = await _menuOpcoes(context, turma.nome, [
+      ('frequencia', Icons.fact_check_outlined, 'Frequência da turma', false),
       ('renomear', Icons.edit_outlined, 'Editar turma (nome e sala)', false),
       ('excluir', Icons.delete_outline, 'Excluir turma', true),
     ]);
+    if (escolha == 'frequencia') _abrir(FrequenciaScreen(turma: turma));
     if (escolha == 'renomear') _editarTurma(turma);
     if (escolha == 'excluir') _excluirTurma(turma);
   }
@@ -918,7 +920,7 @@ class _HistoricoScreenState extends State<HistoricoScreen> {
             );
           }
           // Agrupa por mês, do mais recente para o mais antigo
-          final itens = <Widget>[];
+          final itens = <Widget>[_ResumoFrequencia(turma: widget.turma)];
           String? mesAtual;
           for (final aula in aulas) {
             final mes = '${_meses[aula.inicio.month - 1]} de ${aula.inicio.year}';
@@ -941,9 +943,12 @@ class _HistoricoScreenState extends State<HistoricoScreen> {
 
 // ---------------------- EXPORTAÇÃO ----------------------
 
+/// Exporta o relatório de uma aula ([sessaoId]) ou a frequência acumulada de uma turma ([turmaFrequencia]).
 class _BotaoExportar extends StatefulWidget {
-  final int sessaoId;
-  const _BotaoExportar({required this.sessaoId});
+  final int? sessaoId;
+  final int? turmaFrequencia;
+  const _BotaoExportar({this.sessaoId, this.turmaFrequencia})
+      : assert((sessaoId == null) != (turmaFrequencia == null));
   @override
   State<_BotaoExportar> createState() => _BotaoExportarState();
 }
@@ -952,7 +957,7 @@ class _BotaoExportarState extends State<_BotaoExportar> {
   bool _exportando = false;
 
   Future<void> _escolherFormato() async {
-    final formato = await _menuOpcoes(context, 'Exportar relatório', [
+    final formato = await _menuOpcoes(context, widget.sessaoId != null ? 'Exportar relatório' : 'Exportar frequência', [
       ('pdf', Icons.picture_as_pdf_outlined, 'PDF', false),
       ('xlsx', Icons.grid_on_outlined, 'Planilha do Excel (XLSX)', false),
       ('csv', Icons.description_outlined, 'CSV', false),
@@ -963,7 +968,9 @@ class _BotaoExportarState extends State<_BotaoExportar> {
   Future<void> _exportar(String formato) async {
     setState(() => _exportando = true);
     try {
-      final arquivo = await ApiService.exportar(widget.sessaoId, formato);
+      final arquivo = widget.sessaoId != null
+          ? await ApiService.exportar(widget.sessaoId!, formato)
+          : await ApiService.exportarFrequencia(widget.turmaFrequencia!, formato);
       final mensagem = await entregarArquivo(arquivo.bytes, arquivo.nome, arquivo.tipo);
       if (mounted) _avisar(context, mensagem);
     } on ApiException catch (e) {

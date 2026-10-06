@@ -109,6 +109,45 @@ class AjusteIn(BaseModel):
         return valor
 
 
+class AulaFrequenciaOut(BaseModel):
+    sessao_id: int
+    inicio: datetime
+    fim: Optional[datetime] = None
+
+
+class FrequenciaAlunoOut(BaseModel):
+    """Frequencia acumulada de um aluno nas aulas encerradas da turma (RN-16)."""
+    aluno_id: int
+    nome: str
+    ra: Optional[str] = None
+    aulas: int  # aulas em que o aluno ja fazia parte da turma
+    presencas: int
+    faltas: int
+    ajustes_manuais: int
+    percentual: Optional[float] = None  # presencas / aulas * 100; nulo sem aulas
+    abaixo_do_minimo: bool = False
+    por_aula: List[Optional[str]] = []  # 'P', 'F' ou nulo (ainda nao era da turma), na ordem de 'aulas'
+
+
+class FrequenciaTurmaOut(BaseModel):
+    turma_id: int
+    turma_nome: str
+    professor_nome: Optional[str] = None
+    frequencia_minima: float  # % de aulas com presenca exigido no periodo (RN-16)
+    frequencia_minima_aula: float  # % do tempo de aula para presenca em cada aula (RN-03)
+    total_aulas: int
+    aulas: List[AulaFrequenciaOut] = []
+    alunos: List[FrequenciaAlunoOut] = []
+    alunos_abaixo_do_minimo: int = 0
+
+
+class CameraSalaOut(BaseModel):
+    """Situacao do modulo de IA que atende a chamada, pelo ultimo contato dele com o servidor."""
+    situacao: str  # 'conectada' | 'aguardando' | 'sem_sinal' | 'sem_camera'
+    visto_ha_segundos: Optional[float] = None
+    mensagem: Optional[str] = None
+
+
 class AjusteOut(BaseModel):
     aluno_id: int
     situacao: str
