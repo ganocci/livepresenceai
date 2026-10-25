@@ -1,0 +1,4 @@
+# Somente para desenvolvimento e testes (não vai para o instalador do usuário final)
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1  # exigido pelo TestClient do FastAPI

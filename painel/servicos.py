@@ -92,6 +92,8 @@ def iniciar_servidor(servico: Servico, config: dict) -> Optional[str]:
         "DATABASE_URL": s["database_url"],
         "SECRET_KEY_JWT": s["secret_key_jwt"],
         "CHAVE_MODULO_IA": s["chave_modulo_ia"],
+        "FREQUENCIA_MINIMA_AULA": str(s.get("frequencia_minima_aula", 40)),
+        "FREQUENCIA_MINIMA_TURMA": str(s.get("frequencia_minima_turma", 75)),
         # Descoberta na rede (backend/descoberta.py): o que anunciar aos apps
         "LIVEPRESENCEAI_PORTA_PUBLICA": str(s["porta"]),
         "LIVEPRESENCEAI_HTTPS": "1" if s["https"] else "0",

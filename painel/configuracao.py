@@ -37,6 +37,9 @@ def padrao() -> Dict[str, Any]:
             "database_url": "postgresql+psycopg2://livepresenceai:livepresenceai@localhost:5432/livepresenceai",
             "secret_key_jwt": secrets.token_urlsafe(48),
             "chave_modulo_ia": secrets.token_urlsafe(32),
+            # Politica de frequencia da instituicao (RN-03 e RN-16), em %
+            "frequencia_minima_aula": 40,
+            "frequencia_minima_turma": 75,
         },
         "sala": {
             "ativo": False,

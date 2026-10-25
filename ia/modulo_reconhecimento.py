@@ -39,8 +39,8 @@ from typing import Optional
 import cv2
 import requests
 
-from comum import (LIMIAR_PROVA_VIDA, Galeria, Reconhecedor, abrir_fonte, api, desenhar_pessoa, desenhar_rosto,
-                   escrever_status)
+from comum import (LIMIAR_PROVA_VIDA, PROVA_VIDA_DISPENSAR_ABAIXO_PX, Galeria, Reconhecedor, abrir_fonte, api,
+                   desenhar_pessoa, desenhar_rosto, escrever_status)
 
 ESPERA_SEM_CHAMADA = 5   # segundos entre consultas enquanto nao ha chamada aberta
 ATUALIZAR_GALERIA = 30   # segundos: recarrega cadastros feitos durante a aula
@@ -221,9 +221,14 @@ class Envios:
 _ultimo_aviso_vida = 0.0
 
 
-def passou_prova_de_vida(quadro, reconhecedor: Reconhecedor, rosto) -> bool:
-    """Rosto recusado (foto/tela) ou inconclusivo (cortado na borda) e marcado em vermelho e ignorado."""
+def prova_de_vida(quadro, reconhecedor: Reconhecedor, rosto) -> Optional[bool]:
+    """
+    True (pessoa real), False (recusado: possivel foto ou tela) ou None (inconclusivo: rosto cortado na borda).
+    Recusado ou inconclusivo e marcado em vermelho e nao e reconhecido.
+    """
     global _ultimo_aviso_vida
+    if PROVA_VIDA_DISPENSAR_ABAIXO_PX and rosto.bbox[2] - rosto.bbox[0] < PROVA_VIDA_DISPENSAR_ABAIXO_PX:
+        return True  # rosto pequeno: prova de vida dispensada por configuracao
     with etapa("prova_vida"):
         vivo = reconhecedor.vivo(quadro, rosto)
     if vivo:
@@ -234,7 +239,7 @@ def passou_prova_de_vida(quadro, reconhecedor: Reconhecedor, rosto) -> bool:
     if vivo is False and time.time() - _ultimo_aviso_vida >= 10:  # evita repetir o aviso a cada quadro
         _ultimo_aviso_vida = time.time()
         log(f"Rosto recusado na prova de vida (escore {escore:.2f}): possivel foto ou tela")
-    return False
+    return vivo
 
 
 def processar_sem_rastreamento(quadro, reconhecedor: Reconhecedor, estado: Estado, envios: Envios) -> None:
@@ -244,7 +249,7 @@ def processar_sem_rastreamento(quadro, reconhecedor: Reconhecedor, estado: Estad
     if MEDIDOR:
         MEDIDOR.rostos = len(rostos)
     for rosto in rostos:
-        if not passou_prova_de_vida(quadro, reconhecedor, rosto):
+        if not prova_de_vida(quadro, reconhecedor, rosto):
             continue
         aluno_id, similaridade = estado.galeria.identificar(rosto.normed_embedding)
         aceito = aluno_id is not None and similaridade >= estado.confianca_minima
@@ -277,8 +282,13 @@ def processar_com_rastreamento(quadro, reconhecedor: Reconhecedor, rastreador, i
         trilha = trilha_do_rosto(rosto, trilhas)
         if trilha is not None and not identidades.precisa_reconhecer(trilha.id, agora):
             continue  # trilha ja identificada recentemente: dispensa o reconhecimento
-        if not passou_prova_de_vida(quadro, reconhecedor, rosto):
-            continue  # foto/tela: nao identifica nem renova a identidade de nenhuma trilha
+        vivo = prova_de_vida(quadro, reconhecedor, rosto)
+        if not vivo:
+            # Foto/tela: nao identifica nenhuma trilha; numa trilha ja identificada, a recusa conta como falha,
+            # e depois de FALHAS_MAXIMAS seguidas a trilha perde a identidade (antes ela continuava valendo)
+            if vivo is False and trilha is not None:
+                identidades.registrar(trilha.id, None, 0.0, estado.confianca_minima, agora)
+            continue
         with etapa("reconhecimento"):
             aluno_id, similaridade = estado.galeria.identificar(reconhecedor.extrair(quadro, rosto))
         aceito = aluno_id is not None and similaridade >= estado.confianca_minima

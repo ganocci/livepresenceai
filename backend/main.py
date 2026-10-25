@@ -68,8 +68,9 @@ CONFIANCA_MINIMA = float(os.getenv("CONFIANCA_MINIMA", "0.6"))
 # Intervalo maximo entre duas deteccoes para considerar que o aluno continuou na sala.
 # Acima disso, o periodo sem deteccao e tratado como ausencia (saiu e voltou).
 LIMITE_AUSENCIA = timedelta(seconds=float(os.getenv("LIMITE_AUSENCIA_SEGUNDOS", "60")))
-# RN-03: percentual minimo de permanencia para contar presenca; abaixo disso e falta.
-FREQUENCIA_MINIMA = 40.0
+# RN-03: percentual minimo de permanencia para contar presenca; abaixo disso e falta. Politica de cada
+# instituicao: ajustavel pela variavel de ambiente (o painel a define a partir da configuracao).
+FREQUENCIA_MINIMA = float(os.getenv("FREQUENCIA_MINIMA_AULA", "40"))
 # RN-16: frequencia minima no periodo (% das aulas com presenca). 75% e um valor comum no ensino superior;
 # cada instituicao ajusta a sua regra por variavel de ambiente
 FREQUENCIA_MINIMA_TURMA = float(os.getenv("FREQUENCIA_MINIMA_TURMA", "75"))
@@ -165,11 +166,40 @@ def inicio(request: Request):
             "app_web": "/app/" if APP_WEB_DISPONIVEL else None}
 
 
+# Protecao contra tentativa de senhas (forca bruta): apos LOGIN_TENTATIVAS_MAX erros para o mesmo e-mail (ou 4 vezes
+# isso a partir do mesmo endereco de rede, para nao travar um laboratorio inteiro), o login fica bloqueado ate
+# LOGIN_BLOQUEIO_MINUTOS depois do primeiro erro da sequencia (em memoria; reiniciar o servidor zera).
+LOGIN_TENTATIVAS_MAX = int(os.getenv("LOGIN_TENTATIVAS_MAX", "5"))
+LOGIN_BLOQUEIO = timedelta(minutes=float(os.getenv("LOGIN_BLOQUEIO_MINUTOS", "15")))
+_erros_login: Dict[str, List[datetime]] = {}
+
+
+def _chaves_login(email: str, request: Request) -> List[str]:
+    return [f"email:{email}", f"ip:{request.client.host if request.client else '?'}"]
+
+
+def _verificar_bloqueio_login(chaves: List[str], agora: datetime) -> None:
+    for chave in chaves:
+        erros = [t for t in _erros_login.get(chave, []) if agora - t < LOGIN_BLOQUEIO]
+        _erros_login[chave] = erros
+        limite = LOGIN_TENTATIVAS_MAX if chave.startswith("email:") else 4 * LOGIN_TENTATIVAS_MAX
+        if len(erros) >= limite:
+            minutos = max(1, int((erros[0] + LOGIN_BLOQUEIO - agora).total_seconds() // 60) + 1)
+            raise HTTPException(status_code=429, detail=f"Muitas tentativas de login. Aguarde {minutos} min e "
+                                                        "tente de novo, ou peça ao administrador para redefinir a senha.")
+
+
 @app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    professor = db.query(Professor).filter(Professor.email == form_data.username.strip().lower()).first()
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    email = form_data.username.strip().lower()
+    chaves, agora = _chaves_login(email, request), datetime.utcnow()
+    _verificar_bloqueio_login(chaves, agora)
+    professor = db.query(Professor).filter(Professor.email == email).first()
     if not professor or not pwd_context.verify(form_data.password, professor.senha_hash):
+        for chave in chaves:
+            _erros_login.setdefault(chave, []).append(agora)
         raise HTTPException(status_code=401, detail="E-mail ou senha incorretos")
+    _erros_login.pop(chaves[0], None)  # acerto zera so o e-mail: o contador do endereco de rede continua
     if not professor.ativo:
         raise HTTPException(status_code=401, detail="Conta desativada. Procure o administrador.")
     token = criar_token(professor.email)

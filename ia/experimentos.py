@@ -18,6 +18,9 @@ E3 - permanencia: cronometro do observador durante a aula e comparacao com o rel
   python experimentos.py cronometro --pessoas "12=Ana,13=Bruno" --saida resultados/e3_eventos.csv
   python experimentos.py permanencia --sessao 57 --eventos resultados/e3_eventos.csv --email prof@exemplo.com
 
+E1 - base publica LFW (Labeled Faces in the Wild), protocolo padrao de 6.000 pares em 10 partes:
+  python experimentos.py lfw --pasta C:/dados/lfw_base      (contem lfw/<pessoa>/<pessoa>_0001.jpg e pairs.txt)
+
 E5 - desempenho: o proprio modulo da sala mede (modulo_reconhecimento.py --medir) e este comando resume:
   python modulo_reconhecimento.py --turma 3 --medir resultados/e5.csv --duracao 300
   python experimentos.py desempenho resultados/e5.csv
@@ -358,6 +361,15 @@ def analisar_prova_de_vida(args) -> None:
     else:
         print(f"\nNenhum limiar atinge APCER <= {pct(args.apcer_alvo)}: a prova de vida nao bloqueia esses ataques.")
 
+    # Rostos genuínos recusados por faixa de tamanho: mostra a partir de que distância a prova de vida atrapalha
+    faixas = [(0, 60), (60, 90), (90, 130), (130, 10 ** 6)]
+    print(f"\nGenuínos recusados por largura do rosto (limiar {limiar_atual}):")
+    for de, ate in faixas:
+        lista = [a["vida_escore"] for a in amostras if a["apresentacao"] == "genuina" and de <= a["largura_rosto_px"] < ate]
+        if lista:
+            rotulo = f"{de}-{ate} px" if ate < 10 ** 6 else f">= {de} px"
+            print(f"  {rotulo:<12} {len(lista):>5} amostras, recusadas {pct(proporcao(sum(s < limiar_atual for s in lista), len(lista)))}")
+
     # Por tentativa: um ataque "passa" se algum quadro for aceito (no sistema, basta um para identificar a trilha)
     por_tentativa = defaultdict(list)
     for a in amostras:
@@ -552,6 +564,123 @@ def desempenho(args) -> None:
                 print(f"  {rotulo:<28} media {sum(valores) / len(valores):7.1f} | max {max(valores):7.1f}")
 
 
+# ============================================================================ E1 - base pública LFW
+
+def _pares_lfw(arquivo: str) -> List[Tuple[int, str, str, bool]]:
+    """pairs.txt: '10 300' e, em cada parte, 300 pares da mesma pessoa ('nome i j') e 300 de pessoas
+    diferentes ('nome1 i nome2 j'). Devolve (parte, imagem_a, imagem_b, mesma_pessoa)."""
+    with open(arquivo, encoding="utf-8") as f:
+        linhas = [l.split() for l in f if l.strip()]
+    partes, por_parte = int(linhas[0][0]), int(linhas[0][1])
+    img = lambda nome, n: f"{nome}/{nome}_{int(n):04d}.jpg"  # noqa: E731
+    pares, i = [], 1
+    for parte in range(partes):
+        for _ in range(por_parte):
+            nome, a, b = linhas[i]
+            pares.append((parte, img(nome, a), img(nome, b), True))
+            i += 1
+        for _ in range(por_parte):
+            n1, a, n2, b = linhas[i]
+            pares.append((parte, img(n1, a), img(n2, b), False))
+            i += 1
+    return pares
+
+
+def lfw(args) -> None:
+    import numpy as np
+
+    from comum import Reconhecedor, ler_imagem
+
+    pasta = args.pasta
+    pares = _pares_lfw(os.path.join(pasta, "pairs.txt"))
+    raiz = os.path.join(pasta, "lfw")
+    imagens = sorted({p[1] for p in pares} | {p[2] for p in pares})
+    cache = os.path.join(PASTA_RESULTADOS, "lfw_vetores.npz")
+    vetores: Dict[str, np.ndarray] = {}
+    if os.path.exists(cache):
+        dados = np.load(cache, allow_pickle=False)
+        vetores = {k: dados[k] for k in dados.files}
+    faltam = [i for i in imagens if i.replace("/", "__") not in vetores]
+    sem_rosto = []
+    if faltam:
+        print(f"Extraindo vetores de {len(faltam)} imagens (o resultado fica em cache)...", flush=True)
+        reconhecedor = Reconhecedor(prova_de_vida=False)
+        inicio = time.time()
+        for k, nome in enumerate(faltam, 1):
+            quadro = ler_imagem(os.path.join(raiz, nome))
+            rostos = reconhecedor.rostos(quadro) if quadro is not None else []
+            if rostos:
+                # Na LFW o rosto da pessoa está centralizado: escolhe o mais próximo do centro
+                cy, cx = quadro.shape[0] / 2, quadro.shape[1] / 2
+                rosto = min(rostos, key=lambda f: ((f.bbox[0] + f.bbox[2]) / 2 - cx) ** 2
+                            + ((f.bbox[1] + f.bbox[3]) / 2 - cy) ** 2)
+                vetores[nome.replace("/", "__")] = rosto.normed_embedding.astype(np.float32)
+            else:
+                sem_rosto.append(nome)
+            if k % 500 == 0:
+                print(f"  {k}/{len(faltam)} ({(time.time() - inicio) / k * 1000:.0f} ms por imagem)", flush=True)
+        os.makedirs(PASTA_RESULTADOS, exist_ok=True)
+        np.savez(cache, **vetores)
+
+    # Similaridade de cosseno de cada par (vetores normalizados: produto escalar)
+    avaliados, falhas_aquisicao = [], 0
+    for parte, a, b, mesma in pares:
+        va, vb = vetores.get(a.replace("/", "__")), vetores.get(b.replace("/", "__"))
+        if va is None or vb is None:
+            falhas_aquisicao += 1
+            continue
+        avaliados.append((parte, float(va @ vb), mesma))
+    genuinas = [s_ for _, s_, m in avaliados if m]
+    impostoras = [s_ for _, s_, m in avaliados if not m]
+
+    def taxas(t, lista=avaliados):
+        g = [s_ for _, s_, m in lista if m]
+        i = [s_ for _, s_, m in lista if not m]
+        return proporcao(sum(x >= t for x in i), len(i)), proporcao(sum(x < t for x in g), len(g))
+
+    curva = [[t, *taxas(t)] for t in LIMIARES_SIMILARIDADE]
+    # Acurácia em 10 partes: o limiar é escolhido nas outras 9 partes e aplicado na parte que ficou de fora
+    grade = [round(0.10 + 0.005 * i, 3) for i in range(141)]
+    acuracias = []
+    for parte in range(10):
+        treino = [x for x in avaliados if x[0] != parte]
+        teste = [x for x in avaliados if x[0] == parte]
+        acerto = lambda lista, t: sum((s_ >= t) == m for _, s_, m in lista) / len(lista)  # noqa: E731
+        notas = [acerto(treino, t) for t in grade]
+        empatados = [t for t, n in zip(grade, notas) if n == max(notas)]
+        melhor = empatados[len(empatados) // 2]  # meio da faixa de melhor acurácia, como no E1 em sala
+        acuracias.append((acerto(teste, melhor), melhor))
+    media = sum(a for a, _ in acuracias) / len(acuracias)
+    dp = (sum((a - media) ** 2 for a, _ in acuracias) / (len(acuracias) - 1)) ** 0.5
+    eer = min(curva, key=lambda c: abs((c[1] or 0) - (c[2] or 0)))
+    fmr6, fnmr6 = taxas(0.6)
+
+    print(f"\nE1 - LFW: {len(pares)} pares; {len(avaliados)} avaliados; {falhas_aquisicao} pares com falha de "
+          f"aquisição (rosto não detectado em uma das imagens{': ' + str(len(sem_rosto)) + ' imagens' if sem_rosto else ''})")
+    print(f"Acurácia de verificação (10 partes, limiar escolhido nas outras 9): {100 * media:.2f}% ± {100 * dp:.2f}%"
+          f" (limiares escolhidos: {min(t for _, t in acuracias):.3f} a {max(t for _, t in acuracias):.3f})")
+    print(f"EER aproximada: {pct((eer[1] + eer[2]) / 2)} no limiar {eer[0]:.3f}")
+    print(f"No limiar do sistema (0,60): FMR {pct(fmr6)} e FNMR {pct(fnmr6)}")
+    if fmr6 == 0:
+        print(f"  0 falsas aceitações em {len(impostoras)} pares impostores: limite superior de 95% da FMR "
+              f"~{pct(limite_superior_zero_erros(len(impostoras)))} (regra de três)")
+    print(f"\n{'limiar':>7} {'FMR':>9} {'FNMR':>9}")
+    for t, fmr, fnmr in curva:
+        print(f"{t:>7.3f} {pct(fmr):>9} {pct(fnmr):>9}")
+
+    base = os.path.join(PASTA_RESULTADOS, "lfw")
+    gravar_csv(base + "_e1_curva.csv", ["limiar", "FMR", "FNMR"], curva)
+    gravar_csv(base + "_e1_partes.csv", ["parte", "acuracia", "limiar"],
+               [[i + 1, a, t] for i, (a, t) in enumerate(acuracias)])
+    grafico(base + "_e1_distribuicao.png", "Similaridade nos pares da LFW", "similaridade de cosseno", "pares",
+            [("mesma pessoa", genuinas, 40), ("pessoas diferentes", impostoras, 40)], (0.6, "limiar do sistema 0.6"),
+            histograma=True)
+    grafico(base + "_e1_taxas.png", "FMR e FNMR por limiar (LFW)", "limiar de similaridade", "taxa",
+            [("FMR", [c[0] for c in curva], [c[1] for c in curva]),
+             ("FNMR", [c[0] for c in curva], [c[2] for c in curva])], (0.6, "limiar do sistema 0.6"))
+    print(f"\nArquivos: {base}_e1_curva.csv, {base}_e1_partes.csv, {base}_e1_distribuicao.png, {base}_e1_taxas.png")
+
+
 # ============================================================================ linha de comando
 
 def main() -> None:
@@ -594,12 +723,15 @@ def main() -> None:
     pe.add_argument("--eventos", required=True)
     pe.add_argument("--email", required=True, help="professor dono da turma (senha pedida ou LIVEPRESENCEAI_SENHA)")
 
+    lf = sub.add_parser("lfw", help="E1: verificação na base pública LFW (protocolo de 6.000 pares)")
+    lf.add_argument("--pasta", required=True, help="pasta com lfw\\ (imagens por pessoa) e pairs.txt")
+
     de = sub.add_parser("desempenho", help="E5: resume o CSV de modulo_reconhecimento.py --medir")
     de.add_argument("arquivo")
 
     args = parser.parse_args()
     {"capturar": capturar, "reconhecimento": analisar_reconhecimento, "prova-de-vida": analisar_prova_de_vida,
-     "cronometro": cronometro, "permanencia": permanencia, "desempenho": desempenho}[args.comando](args)
+     "cronometro": cronometro, "permanencia": permanencia, "desempenho": desempenho, "lfw": lfw}[args.comando](args)
 
 
 if __name__ == "__main__":

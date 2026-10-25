@@ -25,6 +25,9 @@ MODELO = os.getenv("MODELO_INSIGHTFACE", "buffalo_l")
 TAMANHO_DETECCAO = 640
 # Escore minimo da prova de vida (0 a 1); 0,8 e o padrao do InsightFace, a calibrar no experimento E2
 LIMIAR_PROVA_VIDA = float(os.getenv("LIMIAR_PROVA_VIDA", "0.8"))
+# Rostos mais estreitos que isto (px) dispensam a prova de vida, que tende a recusar rostos pequenos e distantes
+# genuinos. 0 = nunca dispensa (padrao). Aumenta o risco de ataque com foto pequena: decidir com os dados do E2.
+PROVA_VIDA_DISPENSAR_ABAIXO_PX = int(os.getenv("PROVA_VIDA_DISPENSAR_ABAIXO_PX", "0"))
 
 
 def cabecalhos() -> dict:

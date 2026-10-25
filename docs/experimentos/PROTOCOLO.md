@@ -1,24 +1,27 @@
-# Protocolo dos experimentos (E1 a E5)
+# Protocolo dos experimentos (E1 a E5) e da avaliação de usabilidade
 
-Roteiro prático para executar os experimentos planejados no TCC (seção 4.6). As medidas saem das ferramentas
-de `ia/experimentos.py` e de `ia/modulo_reconhecimento.py --medir`. **Nenhuma imagem é gravada**: só números
-(similaridades, escores e tempos), em `ia/resultados/` (fora do Git).
+Roteiro prático para executar os experimentos do TCC (seção 4.6). **Somente os três autores participam**: não há
+voluntários nem dados de outras pessoas. Isso transforma os experimentos em testes do sistema executados pela
+própria equipe, sobre os próprios dados (seção 4.7 do TCC). Para dar escala ao E1, ele é complementado por uma
+base pública de pesquisa, a LFW (seção 3).
 
-Registrar no TCC somente o que for medido aqui, com as condições reais (computador, câmera, iluminação,
-número de pessoas e de tentativas).
+As medidas saem de `ia/experimentos.py` e de `ia/modulo_reconhecimento.py --medir`. **Nenhuma imagem é gravada**:
+só números (similaridades, escores e tempos), em `ia/resultados/` (fora do Git). Registrar no TCC somente o que
+for medido aqui, com as condições reais (computador, câmera, iluminação, número de tentativas).
+
+Limitações a declarar no TCC: três pessoas não permitem análise por grupo demográfico nem generalizar a acurácia
+em sala; a LFW é uma base de fotos da internet, não uma sala de aula; os testes são executados por quem
+desenvolveu o sistema.
 
 ---
 
 ## 0. Antes do dia
 
-- [ ] Confirmar com o orientador se os experimentos com voluntários precisam de aprovação além do termo de
-      consentimento (seção 6). Os voluntários são adultos.
-- [ ] Imprimir o termo (seção 6), uma cópia por voluntário.
-- [ ] Computador do teste: o mesmo que será descrito no TCC. Anotar processador, memória, placa de vídeo,
-      sistema e câmera (marca, modelo e resolução).
-- [ ] Material do E2: foto colorida impressa em A4 do rosto de 2 voluntários (que autorizaram) e um celular
-      com foto e vídeo desses rostos.
-- [ ] Fita métrica (distâncias de 1 m, 2 m e 3 m marcadas no chão) e cronômetro (o do celular serve).
+- [ ] Computador do teste: o notebook que será descrito no TCC. Anotar processador, memória, placa de vídeo
+      (ou "sem placa dedicada"), sistema e câmera (marca, modelo e resolução).
+- [ ] Material do E2: foto colorida impressa em A4 do rosto de cada autor e um celular com foto e vídeo de
+      cada um.
+- [ ] Fita métrica (1 m, 2 m e 3 m marcados no chão) e cronômetro (o do celular serve).
 - [ ] Sistema ligado pelo painel; abrir um PowerShell em `ia\` com o ambiente do módulo:
       ```powershell
       cd C:\LivePresenceAI\ia        # ou a pasta do projeto
@@ -28,31 +31,30 @@ número de pessoas e de tentativas).
       $env:LIVEPRESENCEAI_CA = "..\config\certificados\ca.crt"
       ```
 
-## 1. Preparação (≈ 20 min)
+## 1. Preparação (≈ 15 min)
 
-1. No app, criar a turma **"Experimento E1-E5"** e cadastrar os voluntários (nome e RA fictício, ex.: `V01`),
-   marcando a autorização de biometria **depois** de o voluntário assinar o termo.
-2. Cadastrar o rosto de cada voluntário **cadastrado** pelo app (como o professor faria).
-   Separar **2 ou 3 voluntários sem cadastro facial**: eles são as "pessoas não cadastradas" do E1.
-3. Anotar o número da turma e o `aluno_id` de cada voluntário:
+1. No app, criar quatro turmas e cadastrar os três autores como alunos em cada uma (RA fictício, ex.: `A1`, `A2`,
+   `A3` com um sufixo por turma), marcando a autorização de biometria:
+   - **"E1 Todos"**: rosto cadastrado dos três;
+   - **"E1 Sem A1"**, **"E1 Sem A2"**, **"E1 Sem A3"**: rosto cadastrado de dois; o terceiro fica sem cadastro
+     facial e faz o papel de "pessoa não cadastrada" (rodízio).
+2. Cadastrar os rostos pelo app, como o professor faria.
+3. Anotar o número de cada turma e o `aluno_id` de cada autor:
    ```powershell
    python experimentos.py capturar --turma <N> --pessoa 0 --condicao x
    ```
    (o comando recusa o aluno 0 e lista os cadastrados com seus números).
-4. Planilha de controle (papel ou Excel): voluntário, `aluno_id`, grupo declarado (opcional, ver seção 6),
-   tentativas feitas.
 
-## 2. E1 — Reconhecimento (≈ 6 min por voluntário)
+## 2. E1 — Reconhecimento em sala (≈ 5 min por pessoa e turma)
 
-Cada tentativa: a pessoa fica diante da câmera, olhando para a sala normalmente (não precisa encarar a
-câmera), por 10 s. O comando faz uma contagem de 3 s antes de gravar.
+Cada tentativa: a pessoa fica diante da câmera, olhando para a sala normalmente, por 10 s (contagem de 3 s antes).
 
 ```powershell
-python experimentos.py capturar --turma <N> --pessoa <aluno_id> --condicao <condicao> [--grupo <grupo>]
-python experimentos.py capturar --turma <N> --pessoa nao-cadastrado --condicao <condicao>
+# na turma "E1 Todos": cada autor, como ele mesmo
+python experimentos.py capturar --turma <E1 Todos> --pessoa <aluno_id> --condicao <condicao>
+# nas turmas de rodízio: o autor sem cadastro, como não cadastrado
+python experimentos.py capturar --turma <E1 Sem A1> --pessoa nao-cadastrado --condicao <condicao>
 ```
-
-Condições (repetir para cada voluntário, cadastrado ou não):
 
 | Condição (`--condicao`) | Como |
 |---|---|
@@ -65,55 +67,63 @@ Condições (repetir para cada voluntário, cadastrado ou não):
 | `oculos-2m` | Com óculos (de grau ou escuros, anotar), 2 m |
 | `bone-capuz-2m` | Boné ou capuz, 2 m |
 
-Com 8 voluntários cadastrados e 3 não cadastrados, são 88 tentativas (~25 min de gravação).
+Repetir cada condição **2 vezes** por pessoa: 3 autores × 8 condições × 2 = 48 tentativas genuínas, e
+3 × 8 = 24 tentativas de não cadastrado (uma por condição em cada rodízio). Cerca de 15 min de gravação.
 
-Análise:
+Análise (os arquivos de todas as turmas podem ser analisados juntos):
 ```powershell
 python experimentos.py reconhecimento resultados\capturas.jsonl
 ```
-Saída: FMR e FNMR por limiar (ISO/IEC 19795-1), identificação 1:N (acerto, troca de identidade, FPIR para
-não cadastrados), resultados por condição e por grupo, limiar sugerido, gráficos (`*_e1_*.png`) e CSV.
 
-## 3. E2 — Ataques de apresentação (≈ 10 min)
+## 3. E1 — Base pública LFW (sem pessoas, ≈ 20 min de processamento)
 
-Com 2 voluntários cadastrados, 3 tentativas de cada tipo, a 1 m:
+A LFW (Labeled Faces in the Wild) é a base clássica de verificação facial: 13.233 fotos de 5.749 pessoas, com o
+protocolo padrão de 6.000 pares (3.000 da mesma pessoa e 3.000 de pessoas diferentes) em 10 partes.
 
 ```powershell
-python experimentos.py capturar --turma <N> --pessoa <aluno_id> --apresentacao foto  --condicao foto-impressa-a4-1m
-python experimentos.py capturar --turma <N> --pessoa <aluno_id> --apresentacao video --condicao tela-celular-foto-1m
-python experimentos.py capturar --turma <N> --pessoa <aluno_id> --apresentacao video --condicao tela-celular-video-1m
+python experimentos.py lfw --pasta <pasta com lfw\ e pairs.txt>
 ```
 
-As tentativas genuínas do E1 servem como apresentações genuínas (bona fide).
+Saída: FMR e FNMR por limiar no mesmo modelo usado em sala, acurácia de verificação nas 10 partes, EER, limiar
+sugerido e gráficos. É o número com escala; o da sala (seção 2) mostra o efeito das condições reais.
 
-Análise:
+## 4. E2 — Ataques de apresentação (≈ 10 min)
+
+Cada autor, na turma "E1 Todos", 3 tentativas de cada tipo, a 1 m:
+
+```powershell
+python experimentos.py capturar --turma <E1 Todos> --pessoa <aluno_id> --apresentacao foto  --condicao foto-impressa-a4-1m
+python experimentos.py capturar --turma <E1 Todos> --pessoa <aluno_id> --apresentacao video --condicao tela-celular-foto-1m
+python experimentos.py capturar --turma <E1 Todos> --pessoa <aluno_id> --apresentacao video --condicao tela-celular-video-1m
+```
+
+As tentativas genuínas do E1 servem como apresentações genuínas (bona fide). Registrar também a distância em que
+rostos genuínos começam a ser recusados (seção 2: as condições a 2 m e 3 m mostram isso).
+
 ```powershell
 python experimentos.py prova-de-vida resultados\capturas.jsonl
 ```
-Saída: APCER por tipo de ataque e BPCER por limiar (ISO/IEC 30107-3), limiar sugerido, ataques que passaram
-em ao menos um quadro (no sistema, basta um quadro aceito para identificar a pessoa) e gráficos.
 
-## 4. E3 — Permanência e E5 — Desempenho (≈ 25 min, juntos)
+## 5. E3 — Permanência e E5 — Desempenho (≈ 25 min, juntos)
 
-1. No app, abrir a chamada da turma de experimento.
-2. Num PowerShell, ligar o módulo medindo o desempenho (E5) durante a aula:
+1. No app, abrir a chamada da turma "E1 Todos".
+2. Num PowerShell, ligar o módulo medindo o desempenho (E5):
    ```powershell
-   python modulo_reconhecimento.py --turma <N> --camera 0 --medir resultados\e5.csv --duracao 1200
+   python modulo_reconhecimento.py --turma <E1 Todos> --camera 0 --medir resultados\e5.csv --duracao 1200
    ```
    (no painel, deixar o reconhecimento da sala **desligado** para não haver dois módulos na mesma câmera).
-3. Noutro PowerShell, o observador abre o cronômetro (E3) com 4 voluntários cadastrados:
+3. O autor A fica a aula inteira diante do notebook e opera o cronômetro do E3:
    ```powershell
-   python experimentos.py cronometro --pessoas "<id>=Ana,<id>=Bruno,<id>=Carla,<id>=Davi"
+   python experimentos.py cronometro --pessoas "<id>=A,<id>=B,<id>=C"
    ```
-   Digitar o número e Enter **no momento em que a pessoa cruza a porta** (entrando ou saindo).
-4. Roteiro de 20 minutos (cada um registra a chegada no início):
+   B e C avisam em voz alta ao cruzar a porta, e A digita o número e Enter na hora.
+4. Roteiro de 20 minutos:
 
-   | Voluntário | Roteiro |
+   | Autor | Roteiro |
    |---|---|
-   | A | Fica a aula inteira |
-   | B | Chega 6 min atrasado |
-   | C | Sai no minuto 5, volta no minuto 9 |
-   | D | Sai definitivamente no minuto 7 (abaixo dos 40%) |
+   | A | Fica a aula inteira (e opera o cronômetro) |
+   | B | Sai no minuto 5 e volta no minuto 9 |
+   | C | Chega 4 min atrasado e sai definitivamente no minuto 10 (abaixo dos 40%) |
 
 5. Encerrar a chamada no app ao fim dos 20 min (o módulo para sozinho com `--duracao`).
 6. Análises:
@@ -121,49 +131,43 @@ em ao menos um quadro (no sistema, basta um quadro aceito para identificar a pes
    python experimentos.py permanencia --sessao <número da chamada> --eventos resultados\e3_eventos.csv --email <e-mail do professor>
    python experimentos.py desempenho resultados\e5.csv
    ```
-   E3: erro em segundos e em pontos percentuais por aluno e situação (presença/falta) esperada × calculada.
-   E5: quadros por segundo, tempo de cada etapa, latência da captura ao registro e uso de CPU, memória e GPU.
 
-Repetir o E5 por 2 minutos com **4 ou mais pessoas** na imagem ao mesmo tempo (o custo do reconhecimento
-cresce com o número de rostos).
+Repetir o E5 por 2 minutos com os três autores na imagem ao mesmo tempo.
 
-## 5. E4 — Tempo de chamada (≈ 10 min)
+## 6. E4 — Tempo de chamada (simulado, ≈ 10 min)
 
-Cronometrar, com a mesma lista de alunos (a turma de experimento ou uma lista impressa de 30 nomes):
+Sem alunos reais: um autor faz o papel do professor, outro responde "presente", com uma lista impressa de
+**40 nomes fictícios**.
 
 | Forma | Início do cronômetro | Fim |
 |---|---|---|
-| Chamada nominal | Professor começa a ler a lista | Último nome respondido e anotado |
-| LivePresenceAI | Professor toca em "Iniciar chamada" | Professor encerra a chamada e confere o relatório (incluindo ajustes manuais, se houver) |
+| Chamada nominal | Começa a ler a lista | Último nome respondido e anotado |
+| LivePresenceAI | Toca em "Iniciar chamada" | Encerra a chamada e confere o relatório (incluindo 2 ajustes manuais) |
 
-Fazer 3 repetições de cada forma e anotar em `ia\resultados\e4_tempos.csv` (forma; repetição; segundos;
-alunos). O tempo do sistema é o **tempo de atenção do professor**, não a duração da aula.
+3 repetições de cada forma, anotadas em `ia\resultados\e4_tempos.csv` (forma; repetição; segundos; nomes). O
+tempo do sistema é o **tempo de atenção do professor**, não a duração da aula. Declarar no TCC que a chamada
+nominal foi simulada.
 
-## 6. Ética e privacidade
+## 7. Avaliação heurística de usabilidade (≈ 1 h, sem participantes)
 
-- Voluntários **adultos**, com termo assinado antes de qualquer cadastro. Quem não quiser participar de
-  alguma parte (ex.: foto impressa do E2) apenas não participa.
-- Só números são guardados. O cadastro facial é o mesmo vetor do sistema e é **apagado ao final**: no app,
-  remover o cadastro facial de cada voluntário (a turma em si não pode ser excluída depois de ter chamadas,
-  porque o histórico é preservado — RN-10).
-- Grupo demográfico (`--grupo`) só se o voluntário quiser declarar, com categorias definidas antes do teste.
-  Com poucos voluntários por grupo, o TCC deve apresentar o resultado como indicativo, não conclusivo.
+Cada autor, **sozinho**, percorre as tarefas abaixo no app (celular ou navegador) e registra cada problema
+encontrado, a heurística de Nielsen violada e a gravidade de 0 a 4 (0 = não é problema; 1 = estético; 2 = pequeno;
+3 = grande; 4 = catástrofe). Depois, os três juntam as listas, eliminam repetições e usam a média das gravidades.
 
-**Modelo de termo (revisar com o orientador antes de usar):**
+Tarefas: entrar no app; criar turma; incluir 3 alunos; cadastrar um rosto; fazer uma chamada; ajustar uma
+presença; exportar o relatório em PDF; ver a frequência da turma.
 
-> Eu, ______________________________, maior de 18 anos, concordo em participar voluntariamente dos testes do
-> trabalho de conclusão de curso "LivePresenceAI" (UNIP), dos alunos João Pedro Santos de Oliveira, Lucas
-> Brandão Oliveira e Filipe Félix da Silva, sob orientação do Prof. Álvaro Nunes. Fui informado(a) de que:
-> (1) meu rosto será captado pela câmera apenas durante os testes; (2) nenhuma foto ou vídeo será gravado,
-> somente medidas numéricas e um vetor de características facial, que serão apagados ao final dos testes;
-> (3) os resultados serão publicados apenas de forma agregada, sem me identificar; (4) posso desistir a
-> qualquer momento, sem nenhum prejuízo; (5) [se aplicável] autorizo que uma foto do meu rosto seja impressa
-> e exibida em tela para o teste de ataques, sendo destruída ao final.
-> Data: ___/___/2026  Assinatura: ______________________
+As 10 heurísticas: visibilidade do estado do sistema; correspondência com o mundo real; controle e liberdade do
+usuário; consistência e padrões; prevenção de erros; reconhecer em vez de lembrar; flexibilidade e eficiência;
+estética e design minimalista; ajudar a reconhecer, diagnosticar e corrigir erros; ajuda e documentação.
 
-## 7. Depois dos testes
+Modelo de registro (`ia\resultados\heuristica_<autor>.csv`): tela; problema; heurística; gravidade.
 
-1. Rodar as análises e guardar a pasta `ia\resultados\` fora do Git (cópia dos autores).
-2. Remover no app o cadastro facial de cada voluntário da turma de experimento.
-3. Calibrar `CONFIANCA_MINIMA` (backend) e `LIMIAR_PROVA_VIDA` (módulo de IA) com os limiares sugeridos,
-   se os resultados justificarem, e registrar a decisão na documentação técnica.
+## 8. Privacidade e depois dos testes
+
+- Só os autores participam, sobre os próprios dados, e só números são guardados.
+- Ao final, remover no app o cadastro facial dos três em todas as turmas de experimento (as turmas não podem ser
+  excluídas depois de ter chamadas, porque o histórico é preservado — RN-10).
+- Guardar `ia\resultados\` fora do Git (cópia dos autores).
+- Calibrar `CONFIANCA_MINIMA` (backend) e `LIMIAR_PROVA_VIDA` (módulo de IA) com os limiares sugeridos, se os
+  resultados justificarem, e registrar a decisão na documentação técnica.

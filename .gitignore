@@ -35,3 +35,6 @@ dist/
 
 # Dados dos experimentos (medidas de voluntarios): fora do Git
 ia/resultados/
+
+# pytest
+.pytest_cache/
