@@ -13,6 +13,13 @@ Limitações a declarar no TCC: três pessoas não permitem análise por grupo d
 em sala; a LFW é uma base de fotos da internet, não uma sala de aula; os testes são executados por quem
 desenvolveu o sistema.
 
+**Jeito mais fácil:** na pasta do projeto (as ferramentas dos experimentos não vão no instalador final), com o
+servidor ligado e nenhum outro programa usando a câmera, rodar
+`powershell -ExecutionPolicy Bypass -File ia\experimentos.ps1`. O menu lê a configuração da instalação, se houver,
+ou usa o servidor de desenvolvimento em `https://localhost:8443`, lista as turmas e os números dos alunos, conduz o E1 e o E2 com
+`experimentos.py roteiro` (modelos carregados uma vez; pode parar e continuar), liga o E3 + E5 e gera um `.zip`
+com os resultados na Área de Trabalho. Os comandos abaixo continuam valendo para quem preferir rodá-los à mão.
+
 ---
 
 ## 0. Antes do dia
@@ -137,7 +144,9 @@ Repetir o E5 por 2 minutos com os três autores na imagem ao mesmo tempo.
 ## 6. E4 — Tempo de chamada (simulado, ≈ 10 min)
 
 Sem alunos reais: um autor faz o papel do professor, outro responde "presente", com uma lista impressa de
-**40 nomes fictícios**.
+**40 nomes fictícios**. A turma e a lista são criadas por
+`python experimentos.py e4-preparar --email <professor>` (turma "Experimento E4 - chamada", 40 alunos sem
+biometria, lista em `ia\resultados\e4_lista_nomes.txt` e modelo em `ia\resultados\e4_tempos.csv`).
 
 | Forma | Início do cronômetro | Fim |
 |---|---|---|
@@ -149,6 +158,9 @@ tempo do sistema é o **tempo de atenção do professor**, não a duração da a
 nominal foi simulada.
 
 ## 7. Avaliação heurística de usabilidade (≈ 1 h, sem participantes)
+
+> **Não executada no TCC** (decisão dos autores em 06/11/2026: só um avaliador disponível). Fica como
+> trabalho futuro; o roteiro abaixo é mantido para essa avaliação.
 
 Cada autor, **sozinho**, percorre as tarefas abaixo no app (celular ou navegador) e registra cada problema
 encontrado, a heurística de Nielsen violada e a gravidade de 0 a 4 (0 = não é problema; 1 = estético; 2 = pequeno;

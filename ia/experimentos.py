@@ -21,6 +21,9 @@ E3 - permanencia: cronometro do observador durante a aula e comparacao com o rel
 E1 - base publica LFW (Labeled Faces in the Wild), protocolo padrao de 6.000 pares em 10 partes:
   python experimentos.py lfw --pasta C:/dados/lfw_base      (contem lfw/<pessoa>/<pessoa>_0001.jpg e pairs.txt)
 
+E4 - tempo de chamada: cria a turma com 40 alunos ficticios e a lista impressa da chamada nominal:
+  python experimentos.py e4-preparar --email prof@exemplo.com
+
 E5 - desempenho: o proprio modulo da sala mede (modulo_reconhecimento.py --medir) e este comando resume:
   python modulo_reconhecimento.py --turma 3 --medir resultados/e5.csv --duracao 300
   python experimentos.py desempenho resultados/e5.csv
@@ -160,6 +163,16 @@ def capturar(args) -> None:
     print(f"Carregando modelos (turma '{dados['turma_nome']}', {len(galeria)} cadastrados)...", flush=True)
     reconhecedor = Reconhecedor(prova_de_vida=True)
     saida = args.saida or os.path.join(PASTA_RESULTADOS, "capturas.jsonl")
+    _gravar_tentativa(args, reconhecedor, galeria, dados, args.turma, pessoa, nome, args.apresentacao, args.condicao,
+                      saida)
+
+
+def _gravar_tentativa(args, reconhecedor, galeria, dados, turma, pessoa, nome, apresentacao, condicao, saida) -> int:
+    """Uma tentativa: contagem de args.preparo s e gravacao de args.segundos s. Devolve o numero de amostras."""
+    import cv2
+
+    from comum import abrir_fonte, desenhar_rosto, escrever_status, janela_fechada
+
     os.makedirs(os.path.dirname(os.path.abspath(saida)), exist_ok=True)
     tentativa = f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
     intervalo = 1.0 / args.taxa
@@ -173,7 +186,7 @@ def capturar(args) -> None:
             agora = time.time()
             restante_preparo = args.preparo - (agora - inicio_preparo)
             if restante_preparo > 0:
-                status = f"{nome} ({args.apresentacao}, {args.condicao}): comeca em {math.ceil(restante_preparo)} s"
+                status = f"{nome} ({apresentacao}, {condicao}): comeca em {math.ceil(restante_preparo)} s"
             else:
                 inicio_captura = inicio_captura or agora
                 decorrido = agora - inicio_captura
@@ -194,10 +207,10 @@ def capturar(args) -> None:
                         amostra = {
                             "tentativa": tentativa,
                             "momento": agora_utc().isoformat(),
-                            "turma": args.turma,
+                            "turma": turma,
                             "pessoa": pessoa,
-                            "apresentacao": args.apresentacao,
-                            "condicao": args.condicao,
+                            "apresentacao": apresentacao,
+                            "condicao": condicao,
                             "grupo": args.grupo,
                             "largura_rosto_px": int(rosto.bbox[2] - rosto.bbox[0]),
                             "deteccao": round(float(rosto.det_score), 4),
@@ -218,7 +231,7 @@ def capturar(args) -> None:
             if not args.sem_janela:
                 escrever_status(quadro, status)
                 cv2.imshow("LivePresenceAI - experimento", quadro)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                if cv2.waitKey(1) & 0xFF == ord("q") or janela_fechada("LivePresenceAI - experimento"):
                     break
     if not args.sem_janela:
         cv2.destroyAllWindows()
@@ -226,6 +239,89 @@ def capturar(args) -> None:
           + (f" ({sem_rosto} leituras sem rosto)" if sem_rosto else ""))
     if amostras == 0:
         print("ATENCAO: nenhum rosto detectado; confira o enquadramento e repita a tentativa.")
+    return amostras
+
+
+# ============================================================================ roteiro guiado (E1 e E2)
+CONDICOES_E1 = [("luz-normal-1m", "luz da sala, 1 m, de frente"), ("luz-normal-2m", "luz da sala, 2 m"),
+                ("luz-normal-3m", "luz da sala, 3 m"), ("lateral-30-2m", "2 m, rosto virado ~30 graus"),
+                ("luz-baixa-2m", "metade das luzes apagadas, 2 m"), ("contraluz-2m", "luz ou janela atras, 2 m"),
+                ("oculos-2m", "com oculos, 2 m"), ("bone-capuz-2m", "bone ou capuz, 2 m")]
+ATAQUES_E2 = [("foto", "foto-impressa-a4-1m", "foto IMPRESSA em A4, a 1 m"),
+              ("video", "tela-celular-foto-1m", "FOTO na tela do celular, a 1 m"),
+              ("video", "tela-celular-video-1m", "VIDEO na tela do celular, a 1 m")]
+
+
+def roteiro(args) -> None:
+    """Conduz todas as tentativas do E1 (ou do E2) com os modelos carregados uma vez; retoma de onde parou."""
+    from comum import Galeria, Reconhecedor, api
+
+    def galeria_da(turma):
+        r = api("GET", f"/ia/turmas/{turma}/galeria")
+        if r.status_code != 200:
+            raise SystemExit(f"Erro {r.status_code} ao carregar a turma {turma}: {r.text}")
+        return r.json(), Galeria(r.json()["alunos"])
+
+    dados_todos, galeria_todos = galeria_da(args.todos)
+    if len(galeria_todos) < 1:
+        raise SystemExit("A turma 'todos' nao tem alunos com cadastro facial.")
+    print("Cadastrados na turma 'todos':", ", ".join(f"{i}={n}" for i, n in galeria_todos.nomes.items()))
+    passos = []  # (chave, turma, dados, galeria, pessoa, nome, apresentacao, condicao, instrucao)
+    if args.fase == "e1":
+        rodizio = {}
+        for par in filter(None, (args.rodizio or "").split(",")):
+            aluno, turma = (int(v) for v in par.split(":"))
+            dados, galeria = galeria_da(turma)
+            if aluno in galeria.nomes:
+                raise SystemExit(f"Na turma {turma}, o aluno {aluno} deveria estar SEM cadastro facial.")
+            rodizio[aluno] = (turma, dados, galeria)
+        for condicao, como in CONDICOES_E1:
+            for repeticao in (1, 2):
+                for pessoa, nome in galeria_todos.nomes.items():
+                    passos.append((f"e1|{condicao}|{pessoa}|{repeticao}", args.todos, dados_todos, galeria_todos,
+                                   pessoa, nome, "genuina", condicao, f"{nome}: {como} (repeticao {repeticao} de 2)"))
+            for aluno, (turma, dados, galeria) in rodizio.items():
+                nome = galeria_todos.nomes.get(aluno, f"aluno {aluno}")
+                passos.append((f"e1|{condicao}|nc{aluno}", turma, dados, galeria, None, "pessoa nao cadastrada",
+                               "genuina", condicao, f"{nome} como NAO CADASTRADO (turma {turma}): {como}"))
+    else:
+        for apresentacao, condicao, como in ATAQUES_E2:
+            for pessoa, nome in galeria_todos.nomes.items():
+                for repeticao in (1, 2, 3):
+                    passos.append((f"e2|{condicao}|{pessoa}|{repeticao}", args.todos, dados_todos, galeria_todos,
+                                   pessoa, nome, apresentacao, condicao,
+                                   f"ATAQUE com o rosto de {nome}: {como} (tentativa {repeticao} de 3)"))
+
+    progresso_arquivo = os.path.join(PASTA_RESULTADOS, f"roteiro_{args.fase}_progresso.json")
+    feitos = set()
+    if os.path.exists(progresso_arquivo):
+        with open(progresso_arquivo, encoding="utf-8") as f:
+            feitos = set(json.load(f))
+    pendentes = [p for p in passos if p[0] not in feitos]
+    print(f"\n{args.fase.upper()}: {len(passos)} tentativas no roteiro, {len(passos) - len(pendentes)} ja feitas, "
+          f"{len(pendentes)} pendentes.")
+    if not pendentes:
+        return
+    print("Carregando modelos (uma vez so)...", flush=True)
+    reconhecedor = Reconhecedor(prova_de_vida=True)
+    saida = args.saida or os.path.join(PASTA_RESULTADOS, "capturas.jsonl")
+    for numero, (chave, turma, dados, galeria, pessoa, nome, apresentacao, condicao, instrucao) in \
+            enumerate(pendentes, len(passos) - len(pendentes) + 1):
+        while True:
+            resposta = input(f"\n[{numero}/{len(passos)}] {instrucao}\n"
+                             "  Enter = gravar | p = pular | s = sair (retoma depois): ").strip().lower()
+            if resposta == "s":
+                print(f"Parado. Rode o mesmo comando para continuar da tentativa {numero}.")
+                return
+            if resposta == "p":
+                break
+            if _gravar_tentativa(args, reconhecedor, galeria, dados, turma, pessoa, nome, apresentacao, condicao,
+                                 saida) or input("  Nenhuma amostra. Repetir? (Enter = sim, n = seguir): ").strip():
+                feitos.add(chave)
+                with open(progresso_arquivo, "w", encoding="utf-8") as f:
+                    json.dump(sorted(feitos), f)
+                break
+    print(f"\n{args.fase.upper()} concluido. Resultados em {saida}")
 
 
 # ============================================================================ E1 - reconhecimento
@@ -272,7 +368,10 @@ def analisar_reconhecimento(args) -> None:
     for t, fmr, fnmr, acerto, troca, fpir in curva:
         marca = "  <- limiar atual" if abs(t - limiar_sistema) < 1e-9 else ""
         print(f"{t:>7.3f} {pct(fmr):>9} {pct(fnmr):>9} {pct(acerto):>11} {pct(troca):>10} {pct(fpir):>9}{marca}")
-    print(f"\nEER aproximada: {pct((eer[1] + eer[2]) / 2)} no limiar {eer[0]:.3f}")
+    if eer[1] is not None and eer[2] is not None:
+        print(f"\nEER aproximada: {pct((eer[1] + eer[2]) / 2)} no limiar {eer[0]:.3f}")
+    else:  # um so cadastrado (teste com um autor): nao ha comparacoes impostoras para a FMR
+        print("\nEER: nao calculada (sem comparacoes impostoras; e preciso mais de uma pessoa cadastrada)")
 
     admissivel = lambda c: c[1] is not None and c[1] <= args.fmr_alvo and (c[4] or 0) == 0  # noqa: E731
     if any(admissivel(c) for c in curva):
@@ -564,6 +663,68 @@ def desempenho(args) -> None:
                 print(f"  {rotulo:<28} media {sum(valores) / len(valores):7.1f} | max {max(valores):7.1f}")
 
 
+# ============================================================================ E4 - tempo de chamada
+NOMES_FICTICIOS = ["Alice", "Bernardo", "Cecília", "Davi", "Elaine", "Fernando", "Gabriela", "Heitor", "Isadora",
+                   "Joaquim", "Kátia", "Leonardo", "Marina", "Nicolas", "Olívia", "Paulo", "Quitéria", "Rafael",
+                   "Sabrina", "Tiago"]
+SOBRENOMES_FICTICIOS = ["Andrade", "Barros", "Campos", "Duarte", "Esteves", "Fontes", "Guerra", "Holanda", "Igarashi",
+                        "Junqueira", "Lacerda", "Moraes", "Nogueira", "Otero", "Pacheco", "Queiroz", "Rezende",
+                        "Siqueira", "Toledo", "Vasconcelos"]
+
+
+def e4_preparar(args) -> None:
+    """Cria a turma do E4 com 40 alunos ficticios e grava a lista para a chamada nominal e o modelo dos tempos."""
+    from comum import URL_BACKEND, _SESSAO
+
+    senha = os.getenv("LIVEPRESENCEAI_SENHA") or getpass.getpass(f"Senha de {args.email}: ")
+    r = _SESSAO.post(f"{URL_BACKEND}/login", data={"username": args.email, "password": senha}, timeout=10)
+    if r.status_code != 200:
+        raise SystemExit(f"Login recusado: {r.text}")
+    cab = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    r = _SESSAO.post(f"{URL_BACKEND}/turmas", json={"nome": "Experimento E4 - chamada"}, headers=cab, timeout=10)
+    if r.status_code != 201:
+        raise SystemExit(f"Turma nao criada ({r.status_code}): {r.text}")
+    turma = r.json()["id"]
+    sufixo = uuid.uuid4().hex[:4].upper()   # RA e unico no banco: permite preparar de novo
+    nomes = [f"{NOMES_FICTICIOS[i % 20]} {SOBRENOMES_FICTICIOS[(i * 7 + i // 20) % 20]}" for i in range(40)]
+    for i, nome in enumerate(sorted(nomes), 1):
+        r = _SESSAO.post(f"{URL_BACKEND}/turmas/{turma}/alunos", headers=cab, timeout=10,
+                         json={"nome": nome, "ra": f"E4-{sufixo}-{i:02d}", "autorizou_biometria": False})
+        if r.status_code != 201:
+            raise SystemExit(f"Aluno nao criado ({r.status_code}): {r.text}")
+    os.makedirs(PASTA_RESULTADOS, exist_ok=True)
+    lista = os.path.join(PASTA_RESULTADOS, "e4_lista_nomes.txt")
+    with open(lista, "w", encoding="utf-8") as f:
+        f.write("E4 - lista de chamada (40 nomes ficticios)\n\n")
+        f.writelines(f"{i:2d}. {nome}    ( ) presente\n" for i, nome in enumerate(sorted(nomes), 1))
+    tempos = os.path.join(PASTA_RESULTADOS, "e4_tempos.csv")
+    if not os.path.exists(tempos):
+        gravar_csv(tempos, ["forma", "repeticao", "segundos", "nomes"],
+                   [[forma, rep, "", 40] for forma in ("nominal", "livepresenceai") for rep in (1, 2, 3)])
+    print(f"Turma #{turma} criada com 40 alunos ficticios (sem biometria).")
+    print(f"Lista para imprimir: {lista}")
+    print(f"Anote os tempos em: {tempos}")
+
+
+def turmas(args) -> None:
+    """Lista as turmas do professor com o numero de cada aluno e se ele tem cadastro facial."""
+    from comum import URL_BACKEND, _SESSAO
+
+    senha = os.getenv("LIVEPRESENCEAI_SENHA") or getpass.getpass(f"Senha de {args.email}: ")
+    r = _SESSAO.post(f"{URL_BACKEND}/login", data={"username": args.email, "password": senha}, timeout=10)
+    if r.status_code != 200:
+        raise SystemExit(f"Login recusado: {r.text}")
+    cab = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    for turma in _SESSAO.get(f"{URL_BACKEND}/turmas", headers=cab, timeout=10).json():
+        if args.filtro and args.filtro.lower() not in turma["nome"].lower():
+            continue
+        alunos = _SESSAO.get(f"{URL_BACKEND}/turmas/{turma['id']}/alunos", headers=cab, timeout=10).json()
+        print(f"\nTurma {turma['id']}: {turma['nome']}")
+        for a in alunos:
+            rosto = "com rosto" if a.get("cadastro_facial") else "sem rosto"
+            print(f"   aluno {a['id']:>5}  {a['nome']:<40} {rosto}")
+
+
 # ============================================================================ E1 - base pública LFW
 
 def _pares_lfw(arquivo: str) -> List[Tuple[int, str, str, bool]]:
@@ -705,6 +866,20 @@ def main() -> None:
     c.add_argument("--saida", help="arquivo JSONL (padrao ia/resultados/capturas.jsonl)")
     c.add_argument("--sem-janela", action="store_true")
 
+    ro = sub.add_parser("roteiro", help="E1/E2: conduz todas as tentativas do protocolo, com os modelos carregados uma vez")
+    ro.add_argument("fase", choices=["e1", "e2"])
+    ro.add_argument("--todos", type=int, required=True, help="turma com o rosto de todos os autores cadastrado")
+    ro.add_argument("--rodizio", help='E1: "aluno_id:turma,..." = turma em que esse autor esta SEM cadastro facial')
+    ro.add_argument("--segundos", type=float, default=10)
+    ro.add_argument("--preparo", type=float, default=3)
+    ro.add_argument("--taxa", type=float, default=3)
+    ro.add_argument("--camera", type=int, default=0)
+    ro.add_argument("--video", help=argparse.SUPPRESS)
+    ro.add_argument("--imagem", help=argparse.SUPPRESS)
+    ro.add_argument("--saida", help="arquivo JSONL (padrao ia/resultados/capturas.jsonl)")
+    ro.add_argument("--sem-janela", action="store_true")
+    ro.set_defaults(todos_rostos=False, grupo=None)
+
     e1 = sub.add_parser("reconhecimento", help="E1: FMR, FNMR, identificacao 1:N e limiar sugerido")
     e1.add_argument("arquivos", nargs="+")
     e1.add_argument("--fmr-alvo", type=float, default=0.001, help="FMR maxima para sugerir o limiar (padrao 0,1%%)")
@@ -729,9 +904,17 @@ def main() -> None:
     de = sub.add_parser("desempenho", help="E5: resume o CSV de modulo_reconhecimento.py --medir")
     de.add_argument("arquivo")
 
+    e4 = sub.add_parser("e4-preparar", help="E4: cria a turma com 40 alunos ficticios e a lista da chamada nominal")
+    e4.add_argument("--email", required=True, help="professor que fara a chamada (senha pedida ou LIVEPRESENCEAI_SENHA)")
+
+    tu = sub.add_parser("turmas", help="lista as turmas, os numeros dos alunos e quem tem cadastro facial")
+    tu.add_argument("--email", required=True, help="professor (senha pedida ou LIVEPRESENCEAI_SENHA)")
+    tu.add_argument("--filtro", help="so turmas cujo nome contem este texto (ex.: E1)")
+
     args = parser.parse_args()
     {"capturar": capturar, "reconhecimento": analisar_reconhecimento, "prova-de-vida": analisar_prova_de_vida,
-     "cronometro": cronometro, "permanencia": permanencia, "desempenho": desempenho, "lfw": lfw}[args.comando](args)
+     "cronometro": cronometro, "permanencia": permanencia, "desempenho": desempenho, "lfw": lfw,
+     "e4-preparar": e4_preparar, "roteiro": roteiro, "turmas": turmas}[args.comando](args)
 
 
 if __name__ == "__main__":

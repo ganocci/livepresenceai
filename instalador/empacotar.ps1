@@ -10,8 +10,8 @@ Uso (PowerShell, na pasta do projeto):
   powershell -ExecutionPolicy Bypass -File instalador\empacotar.ps1             # usa app\build ja compilado
   powershell -ExecutionPolicy Bypass -File instalador\empacotar.ps1 -CompilarApp  # recompila o app web e o APK antes
 
-Ficam fora do pacote: ambientes Python (.venv/venv), config\ (segredos), .git, documentos do TCC e codigo-fonte do
-app Flutter (vai so o app compilado).
+Ficam fora do pacote: ambientes Python (.venv/venv), config\ (segredos), .git, documentos do TCC, testes,
+ferramentas dos experimentos do TCC (ia\experimentos.*) e codigo-fonte do app Flutter (vai so o app compilado).
 #>
 param([switch]$CompilarApp)
 
@@ -49,7 +49,7 @@ try {
     $arquivos = git ls-files --cached --others --exclude-standard -- backend ia painel database instalar.ps1 desinstalar.ps1 PASSO_A_PASSO.md
     if ($LASTEXITCODE -ne 0) { throw "git ls-files falhou" }
 } finally { Pop-Location }
-$arquivos = @($arquivos | Where-Object { $_ -and $_ -notmatch "(^|/)(testes|__pycache__)/" -and (Test-Path (Join-Path $Raiz $_)) })
+$arquivos = @($arquivos | Where-Object { $_ -and $_ -notmatch "(^|/)(testes|__pycache__)/" -and $_ -notmatch "^ia/experimentos\.(py|ps1)$" -and (Test-Path (Join-Path $Raiz $_)) })
 # Pesos do YOLOv8n (fora do Git): evita o download no primeiro uso
 if (Test-Path (Join-Path $Raiz "ia\yolov8n.pt")) { $arquivos += "ia/yolov8n.pt" }
 foreach ($arquivo in $arquivos) {

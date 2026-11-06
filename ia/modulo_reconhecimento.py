@@ -40,10 +40,11 @@ import cv2
 import requests
 
 from comum import (LIMIAR_PROVA_VIDA, PROVA_VIDA_DISPENSAR_ABAIXO_PX, Galeria, Reconhecedor, abrir_fonte, api,
-                   desenhar_pessoa, desenhar_rosto, escrever_status)
+                   desenhar_pessoa, desenhar_rosto, escrever_status, janela_fechada)
 
 ESPERA_SEM_CHAMADA = 5   # segundos entre consultas enquanto nao ha chamada aberta
 ATUALIZAR_GALERIA = 30   # segundos: recarrega cadastros feitos durante a aula
+JANELA = "LivePresenceAI - reconhecimento"
 
 VERDE, LARANJA, AZUL, CINZA, VERMELHO = (0, 200, 0), (0, 140, 255), (255, 140, 0), (160, 160, 160), (0, 0, 255)
 
@@ -373,9 +374,14 @@ def executar(args) -> None:
 
         if not args.sem_janela:
             escrever_status(quadro, status)
-            cv2.imshow("LivePresenceAI - reconhecimento", quadro)
+            cv2.imshow(JANELA, quadro)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+            if janela_fechada(JANELA):
+                # Fechar o video no X nao desliga o reconhecimento da sala (isso e no painel ou com 'q')
+                args.sem_janela = True
+                cv2.destroyAllWindows()
+                log("Janela de video fechada; o reconhecimento continua.")
         fim_espera = time.perf_counter()
     cv2.destroyAllWindows()
     if MEDIDOR:
@@ -414,10 +420,11 @@ def main() -> None:
 
 def testar_camera(indice: int) -> None:
     """Janela com a imagem da camera, para conferir enquadramento e foco ao instalar a sala."""
+    janela = "LivePresenceAI - teste da camera"
     for quadro in abrir_fonte(indice, None, None):
-        escrever_status(quadro, f"Camera {indice} - enquadre a sala; 'q' fecha")
-        cv2.imshow("LivePresenceAI - teste da camera", quadro)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        escrever_status(quadro, f"Camera {indice} - enquadre a sala; 'q' ou o X fecham")
+        cv2.imshow(janela, quadro)
+        if cv2.waitKey(1) & 0xFF in (ord("q"), 27) or janela_fechada(janela):
             break
     cv2.destroyAllWindows()
 

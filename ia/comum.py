@@ -28,6 +28,9 @@ LIMIAR_PROVA_VIDA = float(os.getenv("LIMIAR_PROVA_VIDA", "0.8"))
 # Rostos mais estreitos que isto (px) dispensam a prova de vida, que tende a recusar rostos pequenos e distantes
 # genuinos. 0 = nunca dispensa (padrao). Aumenta o risco de ataque com foto pequena: decidir com os dados do E2.
 PROVA_VIDA_DISPENSAR_ABAIXO_PX = int(os.getenv("PROVA_VIDA_DISPENSAR_ABAIXO_PX", "0"))
+# Resolucao pedida a camera (largura x altura). Sem pedir, o OpenCV usa a resolucao padrao do driver (em geral
+# 640x480), e os rostos a 2-3 m ficam com 25-30 px; a camera usa a maior resolucao suportada ate este valor.
+RESOLUCAO_CAMERA = os.getenv("LIVEPRESENCEAI_RESOLUCAO", "1280x720")
 
 
 def cabecalhos() -> dict:
@@ -179,6 +182,13 @@ def abrir_fonte(camera: int, imagem: Optional[str], video: Optional[str]) -> Ite
     if not captura.isOpened():
         raise SystemExit(f"Nao foi possivel abrir {'o video ' + video if video else f'a camera {camera}'}. "
                          "Verifique a conexao ou tente outro indice (--camera 1).")
+    if not video and RESOLUCAO_CAMERA:
+        largura, altura = (int(v) for v in RESOLUCAO_CAMERA.lower().split("x"))
+        captura.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # HD a 30 quadros/s em USB 2.0
+        captura.set(cv2.CAP_PROP_FRAME_WIDTH, largura)
+        captura.set(cv2.CAP_PROP_FRAME_HEIGHT, altura)
+        print(f"Camera {camera}: {int(captura.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+              f"{int(captura.get(cv2.CAP_PROP_FRAME_HEIGHT))}", flush=True)
     # Video gravado e reproduzido no ritmo real, como uma camera ao vivo: se o processamento atrasa,
     # quadros sao pulados (sem isso o video "andaria" na velocidade do processador)
     fps_video = (captura.get(cv2.CAP_PROP_FPS) or 30.0) if video else 0.0
@@ -217,6 +227,14 @@ def desenhar_rosto(quadro: np.ndarray, rosto, rotulo: str, cor: Tuple[int, int, 
 def escrever_status(quadro: np.ndarray, texto: str) -> None:
     cv2.putText(quadro, sem_acentos(texto), (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
     cv2.putText(quadro, sem_acentos(texto), (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+
+def janela_fechada(nome: str) -> bool:
+    """O usuario fechou a janela no X (sem isto, o proximo imshow a reabre e ela nunca fecha)."""
+    try:
+        return cv2.getWindowProperty(nome, cv2.WND_PROP_VISIBLE) < 1
+    except cv2.error:
+        return True
 
 
 def desenhar_pessoa(quadro: np.ndarray, caixa, rotulo: str, cor: Tuple[int, int, int]) -> None:
