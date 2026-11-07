@@ -17,7 +17,7 @@ import time
 import cv2
 import numpy as np
 
-from comum import Reconhecedor, abrir_fonte, api, desenhar_rosto, escrever_status, ler_imagem
+from comum import Reconhecedor, abrir_fonte, api, desenhar_rosto, escrever_status, ler_imagem, mostrar
 
 AMOSTRAS = 10
 INTERVALO_AMOSTRAS = 0.3  # segundos entre amostras, para variar um pouco a pose
@@ -66,7 +66,7 @@ def capturar(reconhecedor: Reconhecedor, camera: int) -> list:
         for rosto in rostos:
             desenhar_rosto(quadro, rosto, "", (0, 200, 0) if not problema else (0, 0, 255))
         escrever_status(quadro, problema or f"Amostras: {len(amostras)}/{AMOSTRAS}")
-        cv2.imshow("LivePresenceAI - cadastro facial", quadro)
+        mostrar("LivePresenceAI - cadastro facial", quadro)
         if cv2.waitKey(1) & 0xFF == 27:
             break
         if len(amostras) >= AMOSTRAS:

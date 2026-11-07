@@ -40,7 +40,7 @@ import cv2
 import requests
 
 from comum import (LIMIAR_PROVA_VIDA, PROVA_VIDA_DISPENSAR_ABAIXO_PX, Galeria, Reconhecedor, abrir_fonte, api,
-                   desenhar_pessoa, desenhar_rosto, escrever_status, janela_fechada)
+                   desenhar_pessoa, desenhar_rosto, escrever_status, janela_fechada, mostrar)
 
 ESPERA_SEM_CHAMADA = 5   # segundos entre consultas enquanto nao ha chamada aberta
 ATUALIZAR_GALERIA = 30   # segundos: recarrega cadastros feitos durante a aula
@@ -374,7 +374,7 @@ def executar(args) -> None:
 
         if not args.sem_janela:
             escrever_status(quadro, status)
-            cv2.imshow(JANELA, quadro)
+            mostrar(JANELA, quadro)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
             if janela_fechada(JANELA):
@@ -423,7 +423,7 @@ def testar_camera(indice: int) -> None:
     janela = "LivePresenceAI - teste da camera"
     for quadro in abrir_fonte(indice, None, None):
         escrever_status(quadro, f"Camera {indice} - enquadre a sala; 'q' ou o X fecham")
-        cv2.imshow(janela, quadro)
+        mostrar(janela, quadro)
         if cv2.waitKey(1) & 0xFF in (ord("q"), 27) or janela_fechada(janela):
             break
     cv2.destroyAllWindows()

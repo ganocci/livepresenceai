@@ -171,7 +171,7 @@ def _gravar_tentativa(args, reconhecedor, galeria, dados, turma, pessoa, nome, a
     """Uma tentativa: contagem de args.preparo s e gravacao de args.segundos s. Devolve o numero de amostras."""
     import cv2
 
-    from comum import abrir_fonte, desenhar_rosto, escrever_status, janela_fechada
+    from comum import abrir_fonte, desenhar_rosto, escrever_status, janela_fechada, mostrar
 
     os.makedirs(os.path.dirname(os.path.abspath(saida)), exist_ok=True)
     tentativa = f"{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
@@ -230,7 +230,7 @@ def _gravar_tentativa(args, reconhecedor, galeria, dados, turma, pessoa, nome, a
                     ultima_amostra = agora
             if not args.sem_janela:
                 escrever_status(quadro, status)
-                cv2.imshow("LivePresenceAI - experimento", quadro)
+                mostrar("LivePresenceAI - experimento", quadro)
                 if cv2.waitKey(1) & 0xFF == ord("q") or janela_fechada("LivePresenceAI - experimento"):
                     break
     if not args.sem_janela:

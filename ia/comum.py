@@ -30,7 +30,7 @@ LIMIAR_PROVA_VIDA = float(os.getenv("LIMIAR_PROVA_VIDA", "0.8"))
 PROVA_VIDA_DISPENSAR_ABAIXO_PX = int(os.getenv("PROVA_VIDA_DISPENSAR_ABAIXO_PX", "0"))
 # Resolucao pedida a camera (largura x altura). Sem pedir, o OpenCV usa a resolucao padrao do driver (em geral
 # 640x480), e os rostos a 2-3 m ficam com 25-30 px; a camera usa a maior resolucao suportada ate este valor.
-RESOLUCAO_CAMERA = os.getenv("LIVEPRESENCEAI_RESOLUCAO", "1280x720")
+RESOLUCAO_CAMERA = os.getenv("LIVEPRESENCEAI_RESOLUCAO", "1920x1080")
 
 
 def cabecalhos() -> dict:
@@ -184,7 +184,7 @@ def abrir_fonte(camera: int, imagem: Optional[str], video: Optional[str]) -> Ite
                          "Verifique a conexao ou tente outro indice (--camera 1).")
     if not video and RESOLUCAO_CAMERA:
         largura, altura = (int(v) for v in RESOLUCAO_CAMERA.lower().split("x"))
-        captura.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # HD a 30 quadros/s em USB 2.0
+        captura.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))  # Full HD a 30 quadros/s em USB 2.0
         captura.set(cv2.CAP_PROP_FRAME_WIDTH, largura)
         captura.set(cv2.CAP_PROP_FRAME_HEIGHT, altura)
         print(f"Camera {camera}: {int(captura.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
@@ -227,6 +227,15 @@ def desenhar_rosto(quadro: np.ndarray, rosto, rotulo: str, cor: Tuple[int, int, 
 def escrever_status(quadro: np.ndarray, texto: str) -> None:
     cv2.putText(quadro, sem_acentos(texto), (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
     cv2.putText(quadro, sem_acentos(texto), (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+
+def mostrar(nome: str, quadro: np.ndarray, largura_max: int = 1280) -> None:
+    """Mostra o quadro na janela reduzido para caber na tela (a captura em Full HD passa do tamanho da tela);
+    so a exibicao e reduzida: o reconhecimento usa o quadro inteiro."""
+    if quadro.shape[1] > largura_max:
+        escala = largura_max / quadro.shape[1]
+        quadro = cv2.resize(quadro, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA)
+    cv2.imshow(nome, quadro)
 
 
 def janela_fechada(nome: str) -> bool:
