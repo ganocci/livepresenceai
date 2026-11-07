@@ -200,8 +200,8 @@ def backup_vencido(horas: float = 24) -> bool:
 def fazer_backup(config: dict) -> str:
     """
     Copia completa do banco (pg_dump, formato custom) em config/backups/livepresenceai_AAAAMMDD_HHMMSS.dump.
-    Devolve o caminho; levanta RuntimeError com mensagem para o usuario se falhar. Restaurar: ver a
-    documentacao tecnica (secao 17).
+    Devolve o caminho; levanta RuntimeError com mensagem para o usuario se falhar. Restaurar: ver o
+    PASSO_A_PASSO.md (secao 0).
     """
     pg_dump = _pg_dump()
     if not pg_dump:

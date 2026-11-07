@@ -182,4 +182,4 @@ Modelo de registro (`ia\resultados\heuristica_<autor>.csv`): tela; problema; heu
   excluídas depois de ter chamadas, porque o histórico é preservado — RN-10).
 - Guardar `ia\resultados\` fora do Git (cópia dos autores).
 - Calibrar `CONFIANCA_MINIMA` (backend) e `LIMIAR_PROVA_VIDA` (módulo de IA) com os limiares sugeridos, se os
-  resultados justificarem, e registrar a decisão na documentação técnica.
+  resultados justificarem, e registrar a decisão.
